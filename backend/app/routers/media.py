@@ -156,7 +156,7 @@ def get_media(media_id: int, db: Session = Depends(get_db)):
         "file_name": media.file_name,
         "size_bytes": media.size_bytes,
         "prompt": media.prompt,
-        "storage_url": media.storage_url,
+        "storage_url": media.public_url,
         "thumbnail_url": media.thumbnail_url,
         "mime_type": media.mime_type,
         "width": media.width,

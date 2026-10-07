@@ -58,7 +58,7 @@ def _feed_rows(db: Session, platform: Optional[str], kind: Optional[str], status
             "property_id": item.property_id,
             "property_name": prop.name if prop else None,
             "media_id": item.media_id,
-            "media_url": m.storage_url if m else None,
+            "media_url": m.public_url if m else None,
             "media_type": m.media_type if m else None,
             "media_mime": m.mime_type if m else None,
             "media_generation_status": m.generation_status if m else "FAILED",

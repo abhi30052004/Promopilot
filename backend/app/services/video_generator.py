@@ -25,6 +25,9 @@ from app.services.media_storage import (
 
 logger = logging.getLogger(__name__)
 
+# One FFmpeg render at a time: parallel 1080x1920 encodes exhaust a 512MB Render instance.
+_RENDER_LOCK = threading.Semaphore(1)
+
 VIDEO_W, VIDEO_H = 1080, 1920
 FPS = 30
 DURATION = 10
@@ -171,8 +174,10 @@ def _build_video(item: ContentItem, source_bytes: Optional[bytes]) -> bytes:
             "libx264",
             "-pix_fmt",
             "yuv420p",
+            "-threads",
+            "2",
             "-preset",
-            "veryfast",
+            "ultrafast",
             "-crf",
             "28",
             "-movflags",
@@ -235,6 +240,7 @@ def generate_story_video(
 def _run_video_job(content_id: int, media_id: int, source_media_id: Optional[int]) -> None:
     db = SessionLocal()
     try:
+        _RENDER_LOCK.acquire()
         item = db.query(ContentItem).filter(ContentItem.id == content_id).first()
         media = db.query(GeneratedMedia).filter(GeneratedMedia.id == media_id).first()
         source = (
@@ -245,6 +251,7 @@ def _run_video_job(content_id: int, media_id: int, source_media_id: Optional[int
         if item and media:
             generate_story_video(item, source, media, db)
     finally:
+        _RENDER_LOCK.release()
         db.close()
 
 

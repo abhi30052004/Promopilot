@@ -68,7 +68,7 @@ def serialize_items(items: List[ContentItem], db: Session) -> List[dict]:
         unloaded = sa_inspect(item).unloaded
         d = {c.name: getattr(item, c.name) for c in item.__table__.columns if c.key not in unloaded}
         m = media.get(item.media_id)
-        d["media_url"] = m.storage_url if m else None
+        d["media_url"] = m.public_url if m else None
         d["media_type"] = m.media_type if m else None
         d["media_mime"] = m.mime_type if m else None
         d["is_ai_generated"] = bool(m and m.is_ai_generated)
@@ -338,13 +338,13 @@ def generate_creative(item_id: int, db: Session = Depends(get_db)):
                 db, file_handle.read(), item.property_id, item.id, "IMAGE", "PILLOW", "image/jpeg", "jpg",
             )
         item.media_id = media.id
-        item.image_path = media.storage_url
+        item.image_path = media.public_url
         db.commit()
         try:
             os.remove(path)
         except OSError:
             pass
-        return {"status": "ok", "url": media.storage_url, "media_id": media.id}
+        return {"status": "ok", "url": media.public_url, "media_id": media.id}
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Creative generation failed: {str(e)}")

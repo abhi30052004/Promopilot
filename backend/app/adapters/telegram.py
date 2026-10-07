@@ -28,7 +28,7 @@ class TelegramPublisher(MockPublisher):
                 # lives in persistent object storage behind PromoPilot's token route.
                 resp = httpx.post(
                     url + "sendPhoto",
-                    data={"chat_id": chat_id, "caption": text, "photo": item.media.storage_url},
+                    data={"chat_id": chat_id, "caption": text, "photo": item.media.public_url},
                     timeout=30.0,
                 )
             elif item.image_path:

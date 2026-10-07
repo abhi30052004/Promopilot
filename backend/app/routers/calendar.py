@@ -82,7 +82,7 @@ def get_calendar(
             "event_at": when,
             "property_id": item.property_id,
             "property_name": prop.name if prop else None,
-            "media_url": m.storage_url if m else None,
+            "media_url": m.public_url if m else None,
             "media_type": m.media_type if m else None,
             "media_generation_status": m.generation_status if m else "PENDING",
             "is_ai_generated": bool(m and m.is_ai_generated),

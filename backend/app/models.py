@@ -91,6 +91,20 @@ class GeneratedMedia(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    @property
+    def public_url(self):
+        """Tokenized media URL built from the CURRENT public API base URL.
+
+        The stored ``storage_url`` embeds the host that was configured when the file was created
+        (e.g. http://localhost:8000), which breaks on a deployed site (mixed content / wrong host).
+        """
+        if not self.file_token or not self.id:
+            return self.storage_url
+        from app.config import get_settings
+
+        base = get_settings().PUBLIC_API_BASE_URL.rstrip("/")
+        return f"{base}/api/media/{self.id}?t={self.file_token}"
+
     property = relationship("Property",
                             foreign_keys=[property_id],
                             back_populates="generated_media")

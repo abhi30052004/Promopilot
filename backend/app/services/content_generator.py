@@ -438,7 +438,7 @@ def generate_content_for_property(
         image = images[(variant - 1) % len(images)]
         if kind == "post":
             item.media_id = image.id
-            item.image_path = image.storage_url
+            item.image_path = image.public_url
             db.commit()
         else:
             queue_story_video(item, image.id, db, force=not is_new)

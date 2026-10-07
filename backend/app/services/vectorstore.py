@@ -1,8 +1,6 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
-import chromadb
-from chromadb.utils import embedding_functions
 from fastapi import HTTPException
 from app.config import get_settings
 from app.models import Property, ContentItem
@@ -18,12 +16,16 @@ def get_chroma_client():
     
     path = settings.CHROMA_PATH or "./chroma_data"
     os.makedirs(path, exist_ok=True)
+    import chromadb  # heavy import: only when vector indexing is enabled
+
     return chromadb.PersistentClient(path=path)
 
 def get_embedding_function():
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=503, detail="OpenAI API key missing for embeddings.")
         
+    from chromadb.utils import embedding_functions
+
     model = settings.OPENAI_EMBEDDING_MODEL or "text-embedding-3-small"
     return embedding_functions.OpenAIEmbeddingFunction(
         api_key=settings.OPENAI_API_KEY,

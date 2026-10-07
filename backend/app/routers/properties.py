@@ -90,7 +90,7 @@ def _summary(prop: Property, content_preview: Optional[str], preview: Optional[G
     # The list view only needs a short text; the full text is served by the detail endpoint.
     data["content"] = content_preview or None
     data.update(
-        preview_url=preview.storage_url if preview else None,
+        preview_url=preview.public_url if preview else None,
         preview_media_id=preview.id if preview else None,
         preview_status=None,
         content_counts=counts,
@@ -160,7 +160,7 @@ def get_property(prop_id: int, db: Session = Depends(get_db)):
             "failure_reason": pi.failure_reason,
             "is_ai_generated": pi.is_ai_generated,
             "media_id": media.id if media else None,
-            "media_url": media.storage_url if media and media.generation_status == "COMPLETED" else None,
+            "media_url": media.public_url if media and media.generation_status == "COMPLETED" else None,
             "media_status": media.generation_status if media else None,
         })
 
