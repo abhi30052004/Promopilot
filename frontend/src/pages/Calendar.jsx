@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   ChevronRight, ChevronLeft, Calendar as CalendarIcon, 
-  Circle, Image as ImageIcon, Video, MessageCircle, Camera, Send 
+  Image as ImageIcon, Video, MessageCircle, Camera, Send 
 } from 'lucide-react';
 import { startOfWeek, addWeeks, subWeeks, addDays, format, isSameDay, isToday } from 'date-fns';
 import api from '../lib/api';
@@ -35,11 +35,14 @@ const PLATFORM_ICONS = {
   telegram: <MessageCircle size={14} />
 };
 
+const serverDate = (value) => new Date(value && !value.endsWith('Z') ? `${value}Z` : value);
+
 export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [items, setItems] = useState([]);
   const [properties, setProperties] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   
   const [selectedItem, setSelectedItem] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -50,12 +53,18 @@ export default function Calendar() {
 
   const fetchData = async () => {
     setLoading(true);
+    setError('');
     try {
+      const visibleStart = startOfWeek(currentDate, { weekStartsOn: 0 });
+      const visibleEnd = addDays(visibleStart, 6);
       const [propsRes, contentRes] = await Promise.all([
         api.get('/api/properties'),
-        // Fetching all content since API doesn't support date range yet.
-        // We will filter in-memory for the visible week.
-        api.get('/api/content')
+        api.get('/api/calendar', {
+          params: {
+            start: format(visibleStart, 'yyyy-MM-dd'),
+            end: format(visibleEnd, 'yyyy-MM-dd'),
+          },
+        })
       ]);
       
       const propMap = {};
@@ -63,7 +72,7 @@ export default function Calendar() {
       setProperties(propMap);
       setItems(contentRes.data);
     } catch (e) {
-      console.error(e);
+      setError(e.response?.data?.detail || 'Could not load the publishing calendar.');
     } finally {
       setLoading(false);
     }
@@ -78,8 +87,8 @@ export default function Calendar() {
 
   const getItemsForDay = (date) => {
     return items
-      .filter(item => item.scheduled_at && isSameDay(new Date(item.scheduled_at), date))
-      .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+      .filter(item => ['SCHEDULED', 'PUBLISHED'].includes(item.publish_status) && item.scheduled_at && isSameDay(serverDate(item.scheduled_at), date))
+      .sort((a, b) => serverDate(a.scheduled_at) - serverDate(b.scheduled_at));
   };
 
   return (
@@ -115,6 +124,8 @@ export default function Calendar() {
           </div>
         </div>
       </div>
+
+      {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
 
       {/* Legend */}
       <div className="flex flex-wrap gap-4 bg-white p-3 rounded-xl shadow-sm border border-slate-100 text-xs text-slate-600">
@@ -165,7 +176,7 @@ export default function Calendar() {
                       
                       <div className="flex justify-between items-center ps-2">
                         <span className="text-xs font-bold text-slate-700 dir-ltr text-start">
-                          {format(new Date(item.scheduled_at), 'HH:mm')}
+                          {format(serverDate(item.scheduled_at), 'HH:mm')}
                         </span>
                         <div className="flex items-center gap-1.5 text-slate-400">
                           <span title={item.platform}>{PLATFORM_ICONS[item.platform]}</span>

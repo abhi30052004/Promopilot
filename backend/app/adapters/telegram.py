@@ -23,7 +23,15 @@ class TelegramPublisher(MockPublisher):
             
         try:
             url = f"https://api.telegram.org/bot{token}/"
-            if item.image_path:
+            if item.media and item.media.storage_url:
+                # Telegram accepts an HTTPS URL directly; this also works when media
+                # lives in persistent object storage behind PromoPilot's token route.
+                resp = httpx.post(
+                    url + "sendPhoto",
+                    data={"chat_id": chat_id, "caption": text, "photo": item.media.storage_url},
+                    timeout=30.0,
+                )
+            elif item.image_path:
                 abs_path = os.path.join(self.settings.MEDIA_DIR, item.image_path.strip('/'))
                 if os.path.exists(abs_path):
                     with open(abs_path, 'rb') as f:

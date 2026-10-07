@@ -38,7 +38,7 @@ def generate_openai_json(prompt: str, system_prompt: str, schema: Type[T], timeo
         raise LLMError("OpenAI API key missing")
         
     client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=timeout)
-    model = settings.OPENAI_MODEL
+    model = settings.LLM_MODEL or settings.OPENAI_MODEL
 
     @_retry_with_backoff
     def _call(msgs):

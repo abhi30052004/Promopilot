@@ -18,6 +18,19 @@ class PropertyCreate(PropertyBase):
 
 class PropertyRead(PropertyBase):
     id: int
+    source_url: Optional[str] = None
+    title: Optional[str] = None
+    price: Optional[str] = None
+    category: Optional[str] = None
+    approval_status: str = "PENDING"
+    approved_at: Optional[datetime] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    media_status: str = "PENDING"
+    content_generation_status: str = "NONE"
+    scraped_at: Optional[datetime] = None
+    preview_url: Optional[str] = None
+    preview_status: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { 
   X, RefreshCw, Edit, Image as ImageIcon, Check, CalendarClock, 
-  CheckSquare, Globe, Download, MessageSquare 
+  CheckSquare, Globe, MessageSquare 
 } from 'lucide-react';
 import { useLanguage } from '../lib/LanguageContext';
 import api from '../lib/api';
+import MediaPreview from './MediaPreview';
 
 const STATUS_COLORS = {
   draft: 'bg-slate-100 text-slate-700 border-slate-200',
@@ -51,8 +52,6 @@ export default function ContentDrawer({ item: initialItem, properties, onClose, 
     scheduled_at: initialItem.scheduled_at || ''
   });
   const [translation, setTranslation] = useState(null);
-
-  const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
   const handleAction = async (action, endpoint, method = 'post', data = {}) => {
     setActionLoading(action);
@@ -103,31 +102,9 @@ export default function ContentDrawer({ item: initialItem, properties, onClose, 
         </div>
         
         <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-          {item.image_path ? (
-            <div className="rounded-xl overflow-hidden shadow-sm border border-slate-200 relative group max-h-96 bg-slate-100 flex items-center justify-center">
-              <img 
-                src={`${BASE_URL}/media/${item.image_path.replace(/^\/+/, '')}`} 
-                alt="Creative" 
-                className="max-w-full max-h-96 object-contain"
-              />
-              <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <a 
-                  href={`${BASE_URL}/media/${item.image_path.replace(/^\/+/, '')}`} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="bg-white text-slate-800 p-2 rounded-full shadow-lg"
-                >
-                  <Download size={20} />
-                </a>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 h-32 flex flex-col items-center justify-center text-slate-400 gap-2">
-              <ImageIcon size={24} />
-              <span className="text-sm">אין תמונה. מומלץ לייצר קריאייטיב.</span>
-            </div>
-          )}
-
+          <div className={`${item.kind === 'story' ? 'aspect-[9/16] max-h-[600px]' : 'aspect-[4/3]'} rounded-xl overflow-hidden bg-slate-100`}>
+            <MediaPreview src={item.media_url || item.image_path} mediaType={item.media_type} status={item.media_generation_status || 'PENDING'} alt="Content media" className="w-full h-full object-contain" />
+          </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="flex justify-between items-center px-4 py-3 border-b border-slate-100 bg-slate-50">
               <h4 className="font-semibold text-slate-700 flex items-center gap-2">

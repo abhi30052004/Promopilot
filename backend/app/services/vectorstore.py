@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 def get_chroma_client():
+    if not settings.ENABLE_VECTOR_INDEXING:
+        raise HTTPException(status_code=503, detail="Vector indexing is disabled.")
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=503, detail="OpenAI API key missing for vector store.")
     
@@ -57,6 +59,8 @@ def _build_property_text(prop: Property) -> str:
     return "\n".join(parts)
 
 def index_property(prop: Property):
+    if not settings.ENABLE_VECTOR_INDEXING:
+        return
     try:
         col = get_properties_collection()
         text = _build_property_text(prop)
@@ -101,6 +105,8 @@ def search_properties(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     return properties
 
 def index_content(item: ContentItem):
+    if not settings.ENABLE_VECTOR_INDEXING:
+        return
     try:
         if not item.caption:
             return
@@ -147,3 +153,32 @@ def find_similar_content(text: str, threshold: float = 0.9) -> List[Dict[str, An
             })
             
     return similar
+
+
+def ensure_index():
+    """
+    On startup: if the properties ChromaDB collection is missing or empty
+    but properties exist in the DB, re-index from the database.
+    """
+    if not settings.ENABLE_VECTOR_INDEXING:
+        return
+    try:
+        col = get_properties_collection()
+        count = col.count()
+        if count > 0:
+            return  # Already indexed
+
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            from app.models import Property as PropertyModel
+            props = db.query(PropertyModel).all()
+            if not props:
+                return
+            logger.info(f"ChromaDB empty; re-indexing {len(props)} properties from DB")
+            for prop in props:
+                index_property(prop)
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning(f"ensure_index failed: {exc}")

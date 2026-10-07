@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 from app.database import get_db
-from app.models import AgentLog, PublishLog
+from app.models import AgentLog, AutomationLog, PublishLog
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
@@ -40,6 +40,21 @@ def get_logs(type: Optional[str] = None, limit: int = Query(50, le=200), db: Ses
                 "attempt": l.attempt,
                 "error": l.error,
                 "created_at": l.created_at
+            })
+
+    if type in [None, "automation"]:
+        automation_logs = db.query(AutomationLog).order_by(AutomationLog.created_at.desc()).limit(limit).all()
+        for entry in automation_logs:
+            results.append({
+                "id": f"automation_{entry.id}",
+                "type": "automation",
+                "action": entry.action,
+                "entity_type": entry.entity_type,
+                "entity_id": entry.entity_id,
+                "mode": entry.mode,
+                "status": entry.status,
+                "error": entry.error,
+                "created_at": entry.created_at,
             })
             
     # Sort descending

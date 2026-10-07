@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Settings2, Globe, Clock, Check, RefreshCw } from 'lucide-react';
+import { Save, Settings2, Globe, Clock, AlertCircle, RefreshCw } from 'lucide-react';
 import api from '../lib/api';
 
 export default function Settings() {
@@ -16,11 +16,12 @@ export default function Settings() {
   const fetchSettings = async () => {
     try {
       const res = await api.get('/api/settings');
-      // Normalize JSON strings from backend if any, otherwise standard mapping
       const parsed = {
         posts_per_day: parseInt(res.data.posts_per_day) || 3,
         stories_per_day: parseInt(res.data.stories_per_day) || 3,
-        approval_mode: res.data.approval_mode || 'manual',
+        story_duration_seconds: parseInt(res.data.story_duration_seconds) || 10,
+        max_ai_images_per_property: parseInt(res.data.max_ai_images_per_property) || 3,
+        approval_mode: res.data.approval_mode || 'HUMAN',
         brand_tone: res.data.brand_tone || 'relaxing',
         languages: res.data.languages || ['he'],
         platforms_enabled: res.data.platforms_enabled || [],
@@ -29,7 +30,7 @@ export default function Settings() {
       };
       setSettings(parsed);
       setOriginal(JSON.stringify(parsed));
-    } catch (e) {
+    } catch {
       console.error(e);
     } finally {
       setLoading(false);
@@ -135,16 +136,37 @@ export default function Settings() {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">תמונות AI לכל נכס</label>
+                <input 
+                  type="number" min="0" max="10"
+                  value={settings.max_ai_images_per_property}
+                  onChange={e => setSettings({...settings, max_ai_images_per_property: parseInt(e.target.value) || 3})}
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">אורך סטורי (שניות)</label>
+                <input 
+                  type="number" min="5" max="30"
+                  value={settings.story_duration_seconds}
+                  onChange={e => setSettings({...settings, story_duration_seconds: parseInt(e.target.value) || 10})}
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">מצב אישור ברירת מחדל</label>
               <div className="flex gap-4 bg-slate-50 p-1 rounded-lg border border-slate-200">
-                <label className={`flex-1 flex justify-center items-center py-2 rounded-md cursor-pointer transition-colors text-sm font-medium ${settings.approval_mode === 'manual' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}>
-                  <input type="radio" name="mode" className="sr-only" checked={settings.approval_mode === 'manual'} onChange={() => setSettings({...settings, approval_mode: 'manual'})} />
+                <label className={`flex-1 flex justify-center items-center py-2 rounded-md cursor-pointer transition-colors text-sm font-medium ${settings.approval_mode === 'HUMAN' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}>
+                  <input type="radio" name="mode" className="sr-only" checked={settings.approval_mode === 'HUMAN'} onChange={() => setSettings({...settings, approval_mode: 'HUMAN'})} />
                   ידני (דורש אישור אנושי)
                 </label>
-                <label className={`flex-1 flex justify-center items-center py-2 rounded-md cursor-pointer transition-colors text-sm font-medium ${settings.approval_mode === 'auto' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}>
-                  <input type="radio" name="mode" className="sr-only" checked={settings.approval_mode === 'auto'} onChange={() => setSettings({...settings, approval_mode: 'auto'})} />
-                  אוטומטי (פרסום חופשי)
+                <label className={`flex-1 flex justify-center items-center py-2 rounded-md cursor-pointer transition-colors text-sm font-medium ${settings.approval_mode === 'AUTOMATION' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}>
+                  <input type="radio" name="mode" className="sr-only" checked={settings.approval_mode === 'AUTOMATION'} onChange={() => setSettings({...settings, approval_mode: 'AUTOMATION'})} />
+                  אוטומציה (אישור אוטומטי)
                 </label>
               </div>
             </div>

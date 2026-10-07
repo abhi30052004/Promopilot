@@ -10,7 +10,7 @@ class MockPublisher(BasePublisher):
     def __init__(self, platform_name: str, prefix: str):
         self.platform_name = platform_name
         self.prefix = prefix
-        self.failure_rate = float(os.environ.get("MOCK_FAILURE_RATE", "0.1"))
+        self.failure_rate = float(os.environ.get("MOCK_FAILURE_RATE", "0"))
 
     def publish(self, item: ContentItem) -> Dict[str, Any]:
         # 0.5-1.5s delay

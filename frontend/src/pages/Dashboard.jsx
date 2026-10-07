@@ -73,7 +73,7 @@ export default function Dashboard() {
   const todayStr = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="flex flex-col gap-8 max-w-7xl mx-auto">
+    <div className="flex flex-col gap-8 max-w-7xl mx-auto pb-10">
       {toast && (
         <div className={`fixed bottom-4 end-4 px-6 py-3 rounded-lg shadow-lg text-white ${toast.type === 'error' ? 'bg-red-500' : 'bg-emerald-500'} z-50 transition-all`}>
           {toast.msg}
@@ -82,75 +82,63 @@ export default function Dashboard() {
 
       <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-slate-100">
         <div>
-          <h2 className="text-xl font-bold text-slate-800">{t('daily_summary')}</h2>
-          <p className="text-slate-500 text-sm">{t('content_status')}</p>
+          <h2 className="text-xl font-bold text-slate-800">לוח בקרה</h2>
+          <p className="text-slate-500 text-sm">סיכום סטטוס תוכן ונכסים</p>
         </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={() => handleAction('sync', '/api/properties/sync')}
-            disabled={actionLoading !== null}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            <RefreshCw size={18} className={actionLoading === 'sync' ? 'animate-spin' : ''} />
-            {t('website_sync')}
-          </button>
-          
-          <button 
-            onClick={() => handleAction('generate', '/api/agent/run', { date: todayStr, mode: 'manual' })}
-            disabled={actionLoading !== null}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
-          >
-            {actionLoading === 'generate' ? <RefreshCw size={18} className="animate-spin" /> : <Zap size={18} />}
-            {t('create_plan')}
-          </button>
-          
-          <button 
-            onClick={() => handleAction('publish', '/api/scheduler/run-daily')}
-            disabled={actionLoading !== null}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white hover:bg-emerald-600 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
-          >
-            <UploadCloud size={18} />
-            {t('publish_now')}
-          </button>
-        </div>
+        <span className={`px-4 py-2 rounded-full text-sm font-bold ${stats?.approval_mode === 'AUTOMATION' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
+          {stats?.approval_mode === 'AUTOMATION' ? 'Automation' : 'Human Approval'}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <StatCard 
-          title={t('posts_today')} 
-          value={stats?.posts_today || 0} 
+          title="סך הכל נכסים (Scraped)" 
+          value={stats?.scraped_properties || 0} 
           icon={FileText} 
           colorClass="bg-blue-100 text-blue-600" 
         />
         <StatCard 
-          title={t('stories_today')} 
-          value={stats?.stories_today || 0} 
-          icon={PlaySquare} 
-          colorClass="bg-purple-100 text-purple-600" 
-        />
-        <StatCard 
-          title={t('scheduled')} 
-          value={stats?.scheduled || 0} 
-          icon={CalendarClock} 
-          colorClass="bg-emerald-100 text-emerald-600" 
-        />
-        <StatCard 
-          title={t('published')} 
-          value={stats?.published || 0} 
-          icon={CheckCircle} 
-          colorClass="bg-teal-100 text-teal-600" 
-        />
-        <StatCard 
-          title={t('awaiting_approval')} 
-          value={stats?.pending_approval || 0} 
+          title="נכסים ממתינים" 
+          value={stats?.pending_properties || 0} 
           icon={Clock} 
           colorClass="bg-amber-100 text-amber-600" 
         />
         <StatCard 
-          title={t('failed')} 
-          value={stats?.failed || 0} 
+          title="נכסים שאושרו/נדחו" 
+          value={`${stats?.approved_properties || 0} / ${stats?.rejected_properties || 0}`} 
+          icon={CheckCircle} 
+          colorClass="bg-emerald-100 text-emerald-600" 
+        />
+        
+        <StatCard 
+          title="תוכן ממתין לאישור" 
+          value={stats?.content_pending_review || 0} 
+          icon={Clock} 
+          colorClass="bg-amber-100 text-amber-600" 
+        />
+        <StatCard 
+          title="תוכן מאושר" 
+          value={stats?.approved_content || 0} 
+          icon={CheckCircle} 
+          colorClass="bg-emerald-100 text-emerald-600" 
+        />
+        <StatCard 
+          title="תוכן מתוזמן" 
+          value={stats?.scheduled || 0} 
+          icon={CalendarClock} 
+          colorClass="bg-indigo-100 text-indigo-600" 
+        />
+        <StatCard 
+          title="תוכן שפורסם" 
+          value={stats?.published || 0} 
+          icon={UploadCloud} 
+          colorClass="bg-teal-100 text-teal-600" 
+        />
+        <StatCard 
+          title="תוכן שנדחה" 
+          value={stats?.rejected_content || 0} 
           icon={AlertTriangle} 
-          colorClass="bg-red-100 text-red-600" 
+          colorClass="bg-rose-100 text-rose-600" 
         />
       </div>
     </div>

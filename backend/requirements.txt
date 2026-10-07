@@ -29,3 +29,13 @@ python-slugify
 PyJWT
 psycopg[binary]
 pytz
+
+# Storage
+boto3
+pymongo
+
+# Video generation
+imageio-ffmpeg
+
+# Additional utilities
+ipaddress

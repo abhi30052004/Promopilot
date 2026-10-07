@@ -48,7 +48,7 @@ export default function Logs() {
 
   const filteredLogs = logs.filter(l => {
     if (filters.source) {
-      const source = l.type === 'agent' ? l.agent : `publisher (${l.platform})`;
+      const source = l.type === 'agent' ? l.agent : l.type === 'automation' ? l.action : `publisher (${l.platform})`;
       if (!source.toLowerCase().includes(filters.source.toLowerCase())) return false;
     }
     if (filters.status && l.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
@@ -119,7 +119,8 @@ export default function Logs() {
               <tbody className="divide-y divide-slate-100 text-sm font-mono">
                 {filteredLogs.map(log => {
                   const isAgent = log.type === 'agent';
-                  const sourceStr = isAgent ? log.agent : `Publisher (${log.platform})`;
+                  const isAutomation = log.type === 'automation';
+                  const sourceStr = isAgent ? log.agent : isAutomation ? log.action : `Publisher (${log.platform})`;
                   const hasDetails = log.message || log.error || log.response;
                   const isExpanded = expandedRows[log.id];
                   
@@ -144,6 +145,11 @@ export default function Logs() {
                               {log.provider && <span><span className="text-slate-400">LLM:</span> {log.provider}</span>}
                               {log.duration_ms && <span className="flex items-center gap-1"><Clock size={12}/> {log.duration_ms}ms</span>}
                               {log.retry_count > 0 && <span className="text-amber-600">Retry: {log.retry_count}</span>}
+                            </>
+                          ) : isAutomation ? (
+                            <>
+                              <span>{log.entity_type} #{log.entity_id}</span>
+                              <span>Mode: {log.mode}</span>
                             </>
                           ) : (
                             <>

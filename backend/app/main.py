@@ -6,7 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import health, properties, knowledge, llm, auth, settings_router, dashboard, logs, plans, content, agent, feeds, scheduler_router
+from .routers import (
+    health, properties, knowledge, llm, auth, settings_router,
+    dashboard, logs, plans, content, agent, feeds, scheduler_router, calendar
+)
 from .routers.auth import get_current_user
 from .database import SessionLocal
 from .models import Setting
@@ -17,13 +20,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS = {
     "posts_per_day": 3,
     "stories_per_day": 3,
+    "story_duration_seconds": 10,
+    "max_ai_images_per_property": 3,
     "languages": ["he", "en"],
-    "approval_mode": "manual",
+    "approval_mode": "HUMAN",       # HUMAN | AUTOMATION
     "platforms_enabled": ["facebook", "instagram", "tiktok", "x", "telegram"],
     "brand_tone": "relaxing",
     "post_slots": ["09:00", "15:00", "19:00"],
-    "story_slots": ["11:00", "17:00", "20:00"]
+    "story_slots": ["11:00", "17:00", "20:00"],
 }
+
 
 def seed_settings():
     db = SessionLocal()
@@ -33,26 +39,52 @@ def seed_settings():
             if not existing:
                 s = Setting(key=k, value=v)
                 db.add(s)
+            else:
+                # Migrate old values: manual -> HUMAN, auto -> AUTOMATION
+                if k == "approval_mode":
+                    if existing.value in ("manual", "manual_approval"):
+                        existing.value = "HUMAN"
+                    elif existing.value in ("auto", "automatic"):
+                        existing.value = "AUTOMATION"
         db.commit()
     except Exception as e:
         logger.error(f"Failed to seed settings: {e}")
     finally:
         db.close()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+    if settings.APP_ENV.lower() == "production":
+        if settings.STORAGE_BACKEND.lower() == "local":
+            raise RuntimeError(
+                "Production requires persistent media storage: set STORAGE_BACKEND=s3 or mongo"
+            )
+        if not settings.ADMIN_USERNAME or not settings.ADMIN_PASSWORD or not settings.JWT_SECRET:
+            raise RuntimeError("ADMIN_USERNAME, ADMIN_PASSWORD, and JWT_SECRET are required in production")
+        if not settings.SCHEDULER_TOKEN:
+            raise RuntimeError("SCHEDULER_TOKEN is required in production")
+        if "localhost" in settings.PUBLIC_API_BASE_URL or "127.0.0.1" in settings.PUBLIC_API_BASE_URL:
+            raise RuntimeError("PUBLIC_API_BASE_URL must be the public backend URL in production")
+        # Fail at startup rather than after an expensive generation job.
+        from .services.media_storage import get_storage
+
+        get_storage()
+    if settings.STORAGE_BACKEND.lower() == "local":
+        os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    seed_settings()
+
     from .scheduler import start_scheduler, stop_scheduler
     start_scheduler()
-    
-    settings = get_settings()
-    
-    # Ensure MEDIA_DIR exists
-    os.makedirs(settings.MEDIA_DIR, exist_ok=True)
-    
-    # Seed default settings
-    seed_settings()
-    
-    # Startup logging
+
+    # Re-index ChromaDB if collection is empty/missing but properties exist
+    try:
+        from .services.vectorstore import ensure_index
+        ensure_index()
+    except Exception as e:
+        logger.warning(f"ChromaDB ensure_index failed: {e}")
+
     db_url = settings.DATABASE_URL
     if "@" in db_url:
         db_host_part = db_url.split("@")[-1]
@@ -61,17 +93,19 @@ async def lifespan(app: FastAPI):
         db_host = db_url.split("://")[-1]
     else:
         db_host = db_url
-        
+
     logger.info(f"Starting application in '{settings.APP_ENV}' environment")
     logger.info(f"Database host: {db_host}")
-    
+    logger.info(f"Storage backend: {settings.STORAGE_BACKEND}")
+
     yield
-    
+
     from .scheduler import stop_scheduler
     stop_scheduler()
     logger.info("Shutting down application")
 
-app = FastAPI(lifespan=lifespan)
+
+app = FastAPI(lifespan=lifespan, title="PromoPilot API", version="2.0.0")
 
 settings = get_settings()
 
@@ -91,11 +125,15 @@ app.add_middleware(
 
 from urllib.parse import urlparse
 
-os.makedirs(settings.MEDIA_DIR, exist_ok=True)
-mount_path = urlparse(settings.MEDIA_BASE_URL).path
-if not mount_path.startswith("/"):
-    mount_path = "/" + mount_path
-app.mount(mount_path, StaticFiles(directory=settings.MEDIA_DIR), name="media")
+if settings.STORAGE_BACKEND.lower() == "local":
+    os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    mount_path = urlparse(settings.MEDIA_BASE_URL).path
+    if not mount_path.startswith("/"):
+        mount_path = "/" + mount_path
+    app.mount(mount_path, StaticFiles(directory=settings.MEDIA_DIR), name="media")
+
+# Import media router
+from .routers import media as media_router
 
 # Include routers
 app.include_router(health.router, prefix="/api")
@@ -112,4 +150,10 @@ app.include_router(plans.router, prefix="/api", dependencies=protected_route)
 app.include_router(content.router, prefix="/api", dependencies=protected_route)
 app.include_router(agent.router, prefix="/api", dependencies=protected_route)
 app.include_router(feeds.router, prefix="/api", dependencies=protected_route)
+app.include_router(calendar.router, prefix="/api", dependencies=protected_route)
 app.include_router(scheduler_router.router, prefix="/api", dependencies=protected_route)
+app.include_router(media_router.router, prefix="/api", dependencies=protected_route)
+# Tokenized media files must be reachable by native <img>/<video> elements, which
+# cannot attach the dashboard Authorization header.
+app.include_router(media_router.public_router, prefix="/api")
+app.include_router(scheduler_router.public_router, prefix="/api")

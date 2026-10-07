@@ -3,6 +3,8 @@ import os
 import time
 import uuid
 import io
+import json
+import re
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
@@ -14,7 +16,7 @@ from PIL import Image
 from slugify import slugify
 from sqlalchemy.orm import Session
 
-from app.models import Property
+from app.models import AutomationLog, Property, Setting
 from app.config import get_settings
 from app.services.parser_config import ParserConfig
 from app.services.vectorstore import index_property
@@ -150,7 +152,75 @@ def download_image(img_url: str, slug: str) -> Optional[str]:
 def parse_property_page(html: str, url: str) -> Optional[Dict]:
     """Parse HTML to extract property info."""
     soup = BeautifulSoup(html, "html.parser")
-    
+
+    # The current source renders property details through React server payloads,
+    # but also exposes stable schema.org LodgingBusiness JSON-LD. Prefer that
+    # machine-readable source and retain the selector parser as a legacy fallback.
+    lodging = None
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            payload = json.loads(script.string or "")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        candidates = payload if isinstance(payload, list) else [payload]
+        lodging = next(
+            (
+                item for item in candidates
+                if isinstance(item, dict) and item.get("@type") in {"LodgingBusiness", "Hotel", "VacationRental"}
+            ),
+            lodging,
+        )
+
+    if lodging:
+        name = str(lodging.get("name") or "").strip()
+        if not name:
+            return None
+        address = lodging.get("address") if isinstance(lodging.get("address"), dict) else {}
+        location = ", ".join(
+            value for value in (address.get("addressLocality"), address.get("addressRegion")) if value
+        ) or None
+        images = lodging.get("image") or []
+        if not isinstance(images, list):
+            images = [images]
+        image_urls = []
+        for image in images:
+            if isinstance(image, str):
+                image_urls.append(image)
+            elif isinstance(image, dict):
+                image_url = image.get("contentUrl") or image.get("url")
+                if image_url:
+                    image_urls.append(image_url)
+
+        amenities = []
+        amenities_match = re.search(r"amenities:\$R\[\d+\]=(\[[^\]]*\])", html)
+        if amenities_match:
+            try:
+                parsed_amenities = json.loads(amenities_match.group(1))
+                if isinstance(parsed_amenities, list):
+                    amenities = parsed_amenities
+            except json.JSONDecodeError:
+                pass
+
+        price = None
+        price_match = re.search(r"price_per_night:(null|\d+(?:\.\d+)?)", html)
+        if price_match and price_match.group(1) != "null":
+            price = price_match.group(1)
+
+        canonical_url = lodging.get("url") or url
+        canonical_path_slug = urlparse(canonical_url).path.rstrip("/").split("/")[-1]
+        slug = slugify(canonical_path_slug or name, max_length=100, word_boundary=True, allow_unicode=True)
+        return {
+            "name": name,
+            "slug": slug or uuid.uuid4().hex[:8],
+            "url": canonical_url,
+            "description": lodging.get("description") or None,
+            "location": location,
+            "type": lodging.get("@type"),
+            "price": price,
+            "amenities": amenities,
+            "image_urls": list(dict.fromkeys(image_urls)),
+        }
+
     name_el = soup.select_one(ParserConfig.NAME_SELECTOR)
     if not name_el:
         return None # Name is critical, probably not a property page
@@ -170,6 +240,9 @@ def parse_property_page(html: str, url: str) -> Optional[Dict]:
     
     type_el = soup.select_one(ParserConfig.TYPE_SELECTOR)
     type_str = type_el.get_text(strip=True) if type_el else None
+
+    price_el = soup.select_one(ParserConfig.PRICE_SELECTOR)
+    price = price_el.get_text(" ", strip=True) if price_el else None
     
     amenities = [el.get_text(strip=True) for el in soup.select(ParserConfig.AMENITIES_SELECTOR)]
     
@@ -191,12 +264,13 @@ def parse_property_page(html: str, url: str) -> Optional[Dict]:
         "description": description or None,
         "location": location,
         "type": type_str,
+        "price": price,
         "amenities": amenities if amenities else [],
         "image_urls": image_urls
     }
 
 def sync_site(url: str, db: Session) -> Dict:
-    results = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    results = {"created": 0, "updated": 0, "failed": 0, "errors": [], "property_ids": []}
     logger.info(f"Starting sync for {url}")
     
     urls_to_process = extract_sitemap_urls(url)
@@ -209,13 +283,22 @@ def sync_site(url: str, db: Session) -> Dict:
             
     logger.info(f"Discovered {len(urls_to_process)} URLs. Filtering for properties...")
     
-    property_urls = []
+    # Prefer one canonical URL per property slug. The source sitemap contains
+    # translated duplicates (/en/properties/... and /es/properties/...), while
+    # the root /properties/... URL is the canonical record used by the demo.
+    property_candidates = {}
     for u in urls_to_process:
         path = urlparse(u).path.lower()
         if any(p in path for p in ParserConfig.PROPERTY_URL_PATTERNS) or not ParserConfig.PROPERTY_URL_PATTERNS:
-            property_urls.append(u)
+            key = path.rstrip("/").split("/")[-1]
+            rank = 0 if path.startswith("/properties/") else (1 if path.startswith("/en/") else 2)
+            current = property_candidates.get(key)
+            if not current or rank < current[0]:
+                property_candidates[key] = (rank, u)
+
+    property_urls = [candidate[1] for candidate in property_candidates.values()]
             
-    if not property_urls and urls_to_process:
+    if not property_urls and urls_to_process and not ParserConfig.PROPERTY_URL_PATTERNS:
         property_urls = urls_to_process
 
     logger.info(f"Processing {len(property_urls)} potential property pages...")
@@ -243,23 +326,26 @@ def sync_site(url: str, db: Session) -> Dict:
                 
             is_new = db_prop is None
             
-            saved_images = []
-            for img_url in prop_data["image_urls"][:15]: 
-                saved = download_image(img_url, slug)
-                if saved:
-                    saved_images.append(saved)
-            
             if is_new:
                 db_prop = Property(
                     name=prop_data["name"],
                     slug=slug,
                     url=p_url,
+                    source_url=p_url,
+                    title=prop_data["name"],
                     type=prop_data["type"],
+                    category=prop_data["type"],
+                    price=prop_data["price"],
                     description=prop_data["description"],
                     location=prop_data["location"],
                     amenities=prop_data["amenities"],
-                    images=saved_images,
-                    last_synced_at=datetime.utcnow()
+                    # Keep source URLs so validation can verify and persist them.
+                    images=prop_data["image_urls"][:15],
+                    approval_status="PENDING",
+                    media_status="PENDING",
+                    content_generation_status="NONE",
+                    scraped_at=datetime.utcnow(),
+                    last_synced_at=datetime.utcnow(),
                 )
                 db.add(db_prop)
                 results["created"] += 1
@@ -270,11 +356,28 @@ def sync_site(url: str, db: Session) -> Dict:
                 db_prop.location = prop_data["location"]
                 db_prop.amenities = prop_data["amenities"]
                 db_prop.url = p_url
-                if saved_images:
-                    db_prop.images = saved_images
+                db_prop.source_url = p_url
+                db_prop.title = prop_data["name"]
+                db_prop.category = prop_data["type"]
+                db_prop.price = prop_data["price"]
+                if prop_data["image_urls"]:
+                    db_prop.images = prop_data["image_urls"][:15]
                 db_prop.last_synced_at = datetime.utcnow()
+                db_prop.scraped_at = datetime.utcnow()
                 results["updated"] += 1
                 
+            db.commit()
+            db.refresh(db_prop)
+            results["property_ids"].append(db_prop.id)
+
+            mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
+            db.add(AutomationLog(
+                action="PROPERTY_SCRAPED",
+                entity_type="property",
+                entity_id=db_prop.id,
+                mode=mode_row.value if mode_row else "HUMAN",
+                status="SUCCESS",
+            ))
             db.commit()
             
             # Index property in vector store

@@ -7,6 +7,7 @@ class ParserConfig:
     # URL patterns to identify property listing pages
     # These match common slugs for properties on the site
     PROPERTY_URL_PATTERNS = [
+        "/properties/",
         "/zimmer/",
         "/cabins/",
         "/villas/",
@@ -29,6 +30,9 @@ class ParserConfig:
     
     # Property type like cabin or villa
     TYPE_SELECTOR = ".property-type, .category, .type-label"
+
+    # Optional price text; it is stored verbatim and never inferred.
+    PRICE_SELECTOR = ".price, .property-price, [itemprop='price']"
     
     # All images on the page
     IMAGES_SELECTOR = "img"
