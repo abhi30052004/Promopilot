@@ -27,4 +27,5 @@ tzdata
 lxml
 python-slugify
 PyJWT
-psycopg[binary]pytz
+psycopg[binary]
+pytz
