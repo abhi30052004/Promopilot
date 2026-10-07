@@ -19,7 +19,6 @@ python-bidi
 
 beautifulsoup4
 httpx
-playwright
 
 python-multipart
 
@@ -38,4 +37,3 @@ pymongo
 imageio-ffmpeg
 
 # Additional utilities
-ipaddress

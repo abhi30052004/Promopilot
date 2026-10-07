@@ -143,7 +143,7 @@ settings = get_settings()
 frontend_url = getattr(settings, "FRONTEND_URL", None) or os.getenv("FRONTEND_URL")
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 if frontend_url:
-    origins.append(frontend_url)
+    origins.append(frontend_url.rstrip("/"))
 
 app.add_middleware(
     CORSMiddleware,

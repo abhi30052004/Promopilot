@@ -1,0 +1,44 @@
+# Render blueprint for the PromoPilot API. Secrets (sync: false) must be entered in the Render dashboard.
+services:
+  - type: web
+    name: promopilot
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: APP_ENV
+        value: production
+      - key: STORAGE_BACKEND
+        value: mongo
+      - key: MONGODB_DB
+        value: promopilot_media
+      - key: FRONTEND_URL
+        value: https://promopilot-cyan.vercel.app
+      - key: PUBLIC_API_BASE_URL
+        value: https://promopilot-wvo3.onrender.com
+      - key: TIMEZONE
+        value: Asia/Jerusalem
+      - key: DEFAULT_CONTACT_EMAIL
+        value: contact@tzelahahar.co.il
+      - key: DEFAULT_PLATFORMS
+        value: instagram,facebook,linkedin
+      - key: DATABASE_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SCHEDULER_TOKEN
+        sync: false
