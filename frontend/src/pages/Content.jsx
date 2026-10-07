@@ -4,9 +4,10 @@ import ContentCard from '../components/ContentCard';
 import api from '../lib/api';
 import { useLanguage } from '../lib/LanguageContext';
 import { useToast } from '../lib/toast';
-import { DEFAULT_PLATFORMS, PLATFORMS, errorText } from '../lib/format';
+import { DEFAULT_PLATFORMS, PLATFORMS, errorText, parseApiDate } from '../lib/format';
 
 const FILTERS = ['ALL', 'PENDING', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'REJECTED'];
+const RECENT = [['', 'content.recent.any'], ['1', 'content.recent.1m'], ['5', 'content.recent.5m'], ['60', 'content.recent.1h'], ['1440', 'content.recent.24h'], ['10080', 'content.recent.7d']];
 const POST_TYPES = [['1', 'PROPERTY_HIGHLIGHT'], ['2', 'DESTINATION'], ['3', 'EMOTIONAL']];
 const STORY_TYPES = [['1', 'HOOK'], ['2', 'MESSAGE'], ['3', 'CTA']];
 
@@ -111,6 +112,9 @@ export default function Content() {
   const [tab, setTab] = useState('post');
   const [filter, setFilter] = useState('ALL');
   const [langFilter, setLangFilter] = useState('');
+  const [recent, setRecent] = useState('');
+  const [sort, setSort] = useState('new');
+  const [tickKey, setTick] = useState(0);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -132,6 +136,12 @@ export default function Content() {
 
   useEffect(() => { load(); }, [load]);
 
+  // re-render every 30s so the "x min ago" labels and the recency filter stay current
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+
   // keep polling while a story video is still rendering
   const rendering = items.some((i) => ['PENDING', 'GENERATING'].includes(i.media_generation_status));
   useEffect(() => {
@@ -140,7 +150,14 @@ export default function Content() {
     return () => clearInterval(id);
   }, [rendering, load]);
 
-  const ofKind = useMemo(() => items.filter((i) => i.kind === tab && (!langFilter || i.language === langFilter)), [items, tab, langFilter]);
+  const ofKind = useMemo(() => {
+    const cutoff = recent ? Date.now() - Number(recent) * 60000 : null;
+    const time = (i) => parseApiDate(i.created_at)?.getTime() || 0;
+    return items
+      .filter((i) => i.kind === tab && (!langFilter || i.language === langFilter) && (cutoff === null || time(i) >= cutoff))
+      .sort((a, b) => (sort === 'new' ? time(b) - time(a) || b.id - a.id : time(a) - time(b) || a.id - b.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, tab, langFilter, recent, sort, tickKey]);
   const visible = useMemo(() => ofKind.filter((i) => matches(i, filter)), [ofKind, filter]);
 
   return (
@@ -175,7 +192,14 @@ export default function Content() {
             </button>
           ))}
         </div>
-        <select value={langFilter} onChange={(e) => setLangFilter(e.target.value)} className="ms-auto rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
+        <select value={recent} onChange={(e) => setRecent(e.target.value)} className="ms-auto rounded-lg border border-slate-300 px-3 py-1.5 text-sm" aria-label={t('content.recent.label')}>
+          {RECENT.map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" aria-label={t('content.sort.label')}>
+          <option value="new">{t('content.sort.new')}</option>
+          <option value="old">{t('content.sort.old')}</option>
+        </select>
+        <select value={langFilter} onChange={(e) => setLangFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
           <option value="">{t('common.all')} — {t('common.language')}</option>
           <option value="en">{t('lang.en')}</option>
           <option value="he">{t('lang.he')}</option>

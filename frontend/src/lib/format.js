@@ -59,3 +59,16 @@ export const statusTone = {
   STARTED: 'bg-sky-100 text-sky-800',
   SKIPPED: 'bg-slate-100 text-slate-600',
 };
+
+// "2 minutes ago" / "לפני 2 דקות" (localized, based on the API's UTC timestamps)
+export function timeAgo(value, lang = 'en') {
+  const date = parseApiDate(value);
+  if (!date) return '';
+  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(lang === 'he' ? 'he' : 'en', { numeric: 'auto' });
+  const abs = Math.abs(seconds);
+  if (abs < 45) return rtf.format(0, 'second');
+  if (abs < 3600) return rtf.format(Math.round(seconds / 60), 'minute');
+  if (abs < 86400) return rtf.format(Math.round(seconds / 3600), 'hour');
+  return rtf.format(Math.round(seconds / 86400), 'day');
+}

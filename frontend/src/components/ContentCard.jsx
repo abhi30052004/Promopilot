@@ -3,7 +3,7 @@ import { CalendarClock, LoaderCircle, RefreshCw, Send, XCircle } from 'lucide-re
 import api from '../lib/api';
 import { useLanguage } from '../lib/LanguageContext';
 import { useToast } from '../lib/toast';
-import { errorText, fmtDateTime } from '../lib/format';
+import { errorText, fmtDateTime, timeAgo } from '../lib/format';
 import MediaPreview from './MediaPreview';
 import PlatformDialog from './PlatformDialog';
 import StatusBadge from './StatusBadge';
@@ -88,6 +88,9 @@ export default function ContentCard({ item, onChanged }) {
         <div>
           <h3 className="font-bold text-slate-900">{item.title || item.property_name}</h3>
           <p className="text-xs text-slate-500">{t('common.property')}: {item.property_name}</p>
+          {item.created_at && (
+            <p className="text-xs text-slate-400" title={fmtDateTime(item.created_at, lang)}>{t('content.generated_ago', { when: timeAgo(item.created_at, lang) })}</p>
+          )}
         </div>
 
         {isStory ? (

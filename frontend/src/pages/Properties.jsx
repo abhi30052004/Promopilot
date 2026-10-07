@@ -7,7 +7,9 @@ import StatusBadge from '../components/StatusBadge';
 import api from '../lib/api';
 import { useLanguage } from '../lib/LanguageContext';
 import { useToast } from '../lib/toast';
-import { errorText, fmtDate, fmtDateTime } from '../lib/format';
+import { errorText, fmtDate, fmtDateTime, parseApiDate, timeAgo } from '../lib/format';
+
+const RECENT = [['', 'content.recent.any'], ['1', 'content.recent.1m'], ['5', 'content.recent.5m'], ['60', 'content.recent.1h'], ['1440', 'content.recent.24h'], ['10080', 'content.recent.7d']];
 
 const PAGE_SIZE = 60;
 const POLL_MS = 5000;
@@ -111,7 +113,7 @@ function ItemCard({ item, onOpen, onAction, busyKey, t, lang }) {
         <p className="text-sm text-slate-600 line-clamp-3">{item.description || item.summary || t('properties.no_description')}</p>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
           <span className="truncate">{hostname(item.source_url || item.url)}</span>
-          <span>{fmtDate(item.scraped_at, lang)}</span>
+          <span title={fmtDateTime(item.scraped_at, lang)}>{fmtDate(item.scraped_at, lang)} · {timeAgo(item.scraped_at, lang)}</span>
         </div>
         {item.approval_status === 'REJECTED' && item.rejection_reason && (
           <p className="text-xs text-rose-700 bg-rose-50 rounded-lg px-3 py-2 break-words">{t('properties.rejection_reason', { reason: item.rejection_reason })}</p>
@@ -349,6 +351,9 @@ export default function Properties() {
   const [tab, setTab] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [recent, setRecent] = useState('');
+  const [sort, setSort] = useState('new');
+  const [tickKey, setTickKey] = useState(0);
   const [visible, setVisible] = useState(PAGE_SIZE);
 
   const [confirm, setConfirm] = useState(null); // {type, item}
@@ -396,7 +401,12 @@ export default function Properties() {
     return () => clearInterval(timer);
   }, [anyGenerating, detailGenerating, loadList, loadDetail]);
 
-  useEffect(() => { setVisible(PAGE_SIZE); }, [tab, typeFilter, search]);
+  useEffect(() => { setVisible(PAGE_SIZE); }, [tab, typeFilter, search, recent, sort]);
+  // refresh the relative times / recency filter every 30s
+  useEffect(() => {
+    const id = setInterval(() => setTickKey((n) => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   function openDetail(item) {
     detailIdRef.current = item.id;
@@ -484,13 +494,19 @@ export default function Properties() {
 
   const baseFiltered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
-    return items.filter((item) => {
-      if (typeFilter !== 'all' && itemType(item) !== typeFilter) return false;
-      if (!term) return true;
-      const haystack = `${item.title || ''} ${item.name || ''} ${item.location || ''} ${item.description || ''} ${item.category || ''}`.toLocaleLowerCase();
-      return haystack.includes(term);
-    });
-  }, [items, search, typeFilter]);
+    const cutoff = recent ? Date.now() - Number(recent) * 60000 : null;
+    const time = (item) => parseApiDate(item.scraped_at || item.created_at)?.getTime() || 0;
+    return items
+      .filter((item) => {
+        if (typeFilter !== 'all' && itemType(item) !== typeFilter) return false;
+        if (cutoff !== null && time(item) < cutoff) return false;
+        if (!term) return true;
+        const haystack = `${item.title || ''} ${item.name || ''} ${item.location || ''} ${item.description || ''} ${item.category || ''}`.toLocaleLowerCase();
+        return haystack.includes(term);
+      })
+      .sort((a, b) => (sort === 'new' ? time(b) - time(a) || b.id - a.id : time(a) - time(b) || a.id - b.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, search, typeFilter, recent, sort, tickKey]);
 
   const counts = useMemo(() => {
     const result = { ALL: baseFiltered.length, PENDING: 0, APPROVED: 0, REJECTED: 0 };
@@ -538,6 +554,23 @@ export default function Properties() {
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-3 ms-auto">
+          <select
+            value={recent}
+            onChange={(event) => setRecent(event.target.value)}
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
+            aria-label={t('content.recent.label')}
+          >
+            {RECENT.map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}
+          </select>
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value)}
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
+            aria-label={t('content.sort.label')}
+          >
+            <option value="new">{t('content.sort.new')}</option>
+            <option value="old">{t('content.sort.old')}</option>
+          </select>
           <select
             value={typeFilter}
             onChange={(event) => setTypeFilter(event.target.value)}
