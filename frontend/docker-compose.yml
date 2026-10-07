@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: tzela-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tzela
+      POSTGRES_USER: tzela_user
+      POSTGRES_PASSWORD: tzela_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
