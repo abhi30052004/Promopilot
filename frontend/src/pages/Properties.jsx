@@ -75,15 +75,6 @@ function ActionButtons({ item, onAction, onGenerate, onRetryImages, busyKey, t, 
           </button>
         </>
       )}
-      {item.approval_status === 'APPROVED' && onGenerate && (
-        <button
-          onClick={() => onGenerate(item)}
-          disabled={disabled || GENERATING.includes(item.content_generation_status)}
-          className={`flex-1 min-w-32 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium flex items-center justify-center gap-1.5 px-3 disabled:opacity-50 ${size}`}
-        >
-          {busyKey === `${item.id}:generate` ? <Spinner /> : <Sparkles size={15} />} {t('properties.generate_content')}
-        </button>
-      )}
       {item.media_status === 'FAILED' && onRetryImages && (
         <button
           onClick={() => onRetryImages(item)}

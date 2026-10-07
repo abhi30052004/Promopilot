@@ -71,8 +71,8 @@ export default function Layout() {
         <nav className="flex-1 p-4 flex flex-col gap-1 overflow-y-auto">
           <SidebarLink to="/dashboard" icon={LayoutDashboard} onClick={closeMobile}>{t('nav.dashboard')}</SidebarLink>
           <SidebarLink to="/properties" icon={Home} onClick={closeMobile}>{t('nav.properties')}</SidebarLink>
-          <SidebarLink to="/approvals" icon={CheckSquare} onClick={closeMobile}>{t('nav.approvals')}</SidebarLink>
           <SidebarLink to="/content" icon={FileText} onClick={closeMobile}>{t('nav.content')}</SidebarLink>
+          <SidebarLink to="/approvals" icon={CheckSquare} onClick={closeMobile}>{t('nav.approvals')}</SidebarLink>
           <SidebarLink to="/calendar" icon={Calendar} onClick={closeMobile}>{t('nav.calendar')}</SidebarLink>
           <SidebarLink to="/feeds" icon={Rss} onClick={closeMobile}>{t('nav.feeds')}</SidebarLink>
           <SidebarLink to="/logs" icon={FileClock} onClick={closeMobile}>{t('nav.logs')}</SidebarLink>
