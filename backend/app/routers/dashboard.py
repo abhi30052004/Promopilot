@@ -1,48 +1,74 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.models import ContentItem, Property, Setting
+from app.models import AutomationLog, ContentItem, GeneratedMedia, Property
+from app.services.events import get_mode
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
+def _count(db: Session, *filters, model=ContentItem) -> int:
+    return db.query(func.count(model.id)).filter(*filters).scalar() or 0
+
+
 @router.get("/stats")
 def get_dashboard_stats(db: Session = Depends(get_db)):
-    # Properties
-    total_props = db.query(Property).count()
-    pending_props = db.query(Property).filter(Property.approval_status == "PENDING").count()
-    approved_props = db.query(Property).filter(Property.approval_status == "APPROVED").count()
-    rejected_props = db.query(Property).filter(Property.approval_status == "REJECTED").count()
+    """Real counts straight from the database (no cached or hard-coded numbers)."""
+    total = _count(db, model=Property)
+    pending_props = _count(db, Property.approval_status == "PENDING", model=Property)
+    approved_props = _count(db, Property.approval_status == "APPROVED", model=Property)
+    rejected_props = _count(db, Property.approval_status == "REJECTED", model=Property)
 
-    # Content
-    content_pending = db.query(ContentItem).filter(ContentItem.approval_status == "PENDING").count()
-    content_approved = db.query(ContentItem).filter(ContentItem.approval_status == "APPROVED").count()
-    content_scheduled = db.query(ContentItem).filter(ContentItem.publish_status == "SCHEDULED").count()
-    content_published = db.query(ContentItem).filter(ContentItem.publish_status == "PUBLISHED").count()
-    content_rejected = db.query(ContentItem).filter(ContentItem.approval_status == "REJECTED").count()
-    content_failed = db.query(ContentItem).filter(ContentItem.publish_status == "FAILED").count()
+    posts = _count(db, ContentItem.kind == "post")
+    stories = _count(db, ContentItem.kind == "story")
+    pending = _count(db, ContentItem.approval_status == "PENDING")
+    approved = _count(db, ContentItem.approval_status == "APPROVED")
+    scheduled = _count(db, ContentItem.publish_status == "SCHEDULED")
+    published = _count(db, ContentItem.publish_status == "PUBLISHED")
+    rejected = _count(db, ContentItem.approval_status == "REJECTED")
+    publish_failed = _count(db, ContentItem.publish_status == "FAILED")
 
-    # Legacy compat fields
-    posts_today = db.query(ContentItem).filter(ContentItem.kind == "post").count()
-    stories_today = db.query(ContentItem).filter(ContentItem.kind == "story").count()
-    mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
+    images = _count(
+        db, GeneratedMedia.media_type == "IMAGE", GeneratedMedia.is_ai_generated.is_(True),
+        GeneratedMedia.generation_status == "COMPLETED", model=GeneratedMedia,
+    )
+    videos = _count(
+        db, GeneratedMedia.media_type == "VIDEO", GeneratedMedia.generation_status == "COMPLETED",
+        model=GeneratedMedia,
+    )
+    failed_media = _count(db, GeneratedMedia.generation_status == "FAILED", model=GeneratedMedia)
+    failed_props = _count(db, Property.content_generation_status == "FAILED", model=Property)
+    failed_generations = failed_media + failed_props
 
+    mode = get_mode(db)
     return {
         # Properties
-        "scraped_properties": total_props,
+        "total_scraped": total,
+        "scraped_properties": total,
         "pending_properties": pending_props,
         "approved_properties": approved_props,
         "rejected_properties": rejected_props,
-        # Content
-        "content_pending_review": content_pending,
-        "approved_content": content_approved,
-        "scheduled": content_scheduled,
-        "published": content_published,
-        "rejected_content": content_rejected,
-        "failed": content_failed,
-        # Legacy
-        "posts_today": posts_today,
-        "stories_today": stories_today,
-        "pending_approval": content_pending,
-        "approval_mode": mode_row.value if mode_row else "HUMAN",
+        # Generated content
+        "posts_generated": posts,
+        "stories_generated": stories,
+        "pending_content": pending,
+        "content_pending_review": pending,
+        "approved_content": approved,
+        "scheduled": scheduled,
+        "published": published,
+        "rejected_content": rejected,
+        "failed": publish_failed,
+        # Media
+        "images_generated": images,
+        "videos_generated": videos,
+        "failed_generations": failed_generations,
+        # Mode
+        "current_mode": mode,
+        "approval_mode": mode,
+        # Legacy fields kept for older clients
+        "posts_today": posts,
+        "stories_today": stories,
+        "pending_approval": pending,
     }

@@ -11,12 +11,13 @@ from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 from PIL import Image
 from slugify import slugify
 from sqlalchemy.orm import Session
 
-from app.models import AutomationLog, Property, Setting
+from app.models import Property
+from app.services.events import log_event
+from app.services.articles import build_snapshot, detect_language
 from app.config import get_settings
 from app.services.parser_config import ParserConfig
 from app.services.vectorstore import index_property
@@ -32,40 +33,19 @@ def get_browser_headers():
     }
 
 def fetch_html(url: str, retries: int = 3) -> Tuple[Optional[str], bool]:
-    """Fetch HTML using httpx. Returns (html_content, is_playwright_used)."""
+    """Fetch HTML using httpx only (no headless browser). Returns (html, False)."""
     for attempt in range(retries):
         try:
             with httpx.Client(timeout=15.0, headers=get_browser_headers(), follow_redirects=True) as client:
                 response = client.get(url)
                 response.raise_for_status()
-                html = response.text
-                
-                # Check if we got enough content
-                if len(html) < ParserConfig.MIN_CONTENT_LENGTH:
-                    logger.warning(f"Content too short ({len(html)} bytes), falling back to Playwright for {url}")
-                    return fetch_with_playwright(url), True
-                
-                return html, False
+                return response.text, False
         except Exception as e:
             logger.warning(f"Attempt {attempt+1} failed for {url}: {e}")
             time.sleep(2)
-            
-    logger.error(f"All retries failed for {url}, trying Playwright.")
-    return fetch_with_playwright(url), True
 
-def fetch_with_playwright(url: str) -> Optional[str]:
-    logger.info(f"Using Playwright for {url}")
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=30000, wait_until="networkidle")
-            html = page.content()
-            browser.close()
-            return html
-    except Exception as e:
-        logger.error(f"Playwright failed for {url}: {e}")
-        return None
+    logger.error(f"All retries failed for {url}")
+    return None, False
 
 def extract_sitemap_urls(url: str) -> List[str]:
     """Try to find URLs from sitemaps."""
@@ -272,6 +252,13 @@ def parse_property_page(html: str, url: str) -> Optional[Dict]:
 def sync_site(url: str, db: Session) -> Dict:
     results = {"created": 0, "updated": 0, "failed": 0, "errors": [], "property_ids": []}
     logger.info(f"Starting sync for {url}")
+
+    # The English articles section is scraped by the dedicated article parser.
+    if "/articles" in urlparse(url).path:
+        from app.services.articles import sync_articles
+
+        base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        return sync_articles(db, fetch_html, extract_sitemap_urls, base)
     
     urls_to_process = extract_sitemap_urls(url)
     
@@ -365,20 +352,17 @@ def sync_site(url: str, db: Session) -> Dict:
                 db_prop.last_synced_at = datetime.utcnow()
                 db_prop.scraped_at = datetime.utcnow()
                 results["updated"] += 1
-                
+
+            # Full scraped context + reproducible snapshot (spec sections 3 and 49).
+            db_prop.content = prop_data["description"]
+            db_prop.summary = (prop_data["description"] or "")[:300] or None
+            db_prop.language = detect_language(prop_data["description"] or prop_data["name"])
+            db_prop.source_snapshot = build_snapshot(db_prop, datetime.utcnow())
             db.commit()
             db.refresh(db_prop)
             results["property_ids"].append(db_prop.id)
 
-            mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-            db.add(AutomationLog(
-                action="PROPERTY_SCRAPED",
-                entity_type="property",
-                entity_id=db_prop.id,
-                mode=mode_row.value if mode_row else "HUMAN",
-                status="SUCCESS",
-            ))
-            db.commit()
+            log_event(db, "SCRAPED", "property", db_prop.id, "SUCCESS", language=db_prop.language)
             
             # Index property in vector store
             index_property(db_prop)

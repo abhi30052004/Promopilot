@@ -35,6 +35,17 @@ class MediaStorage(ABC):
     def delete(self, storage_key: str) -> None:
         """Delete an object when it exists."""
 
+    def exists(self, storage_key: str) -> bool:
+        """True when the stored object can be opened (used to detect lost media)."""
+        try:
+            stream, _length, _mime = self.open_stream(storage_key)
+        except Exception:
+            return False
+        close = getattr(stream, "close", None)
+        if close:
+            close()
+        return True
+
 
 class LocalStorage(MediaStorage):
     def __init__(self, media_dir: str):
@@ -104,12 +115,25 @@ class MongoGridFSStorage(MediaStorage):
         import gridfs
         from pymongo import MongoClient
 
-        self.client = MongoClient(
-            uri, serverSelectionTimeoutMS=5000, retryWrites=True, appname="promopilot"
-        )
+        # mongodb+srv:// needs a DNS SRV lookup that is occasionally slow/flaky on
+        # developer networks, so connect with a few retries before giving up.
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                self.client = MongoClient(
+                    uri, serverSelectionTimeoutMS=20000, retryWrites=True, appname="promopilot"
+                )
+                self.client.admin.command("ping")
+                break
+            except Exception as exc:  # pragma: no cover - network dependent
+                last_error = exc
+                logger.warning("MongoDB connect attempt %s failed: %s", attempt, exc)
+        else:
+            raise RuntimeError(f"Could not connect to MongoDB GridFS: {last_error}")
         self.db = self.client[db_name]
-        self.fs = gridfs.GridFSBucket(self.db, bucket_name="media")
-        self.db["media.files"].create_index("metadata.media_id")
+        # Default GridFS bucket => collections fs.files / fs.chunks (per spec).
+        self.fs = gridfs.GridFSBucket(self.db, bucket_name="fs")
+        self.db["fs.files"].create_index("metadata.media_id")
 
     def upload(
         self, data: bytes, filename: str, mime_type: str, metadata: dict
@@ -144,7 +168,7 @@ def get_storage() -> MediaStorage:
         backend,
         settings.MEDIA_DIR,
         settings.MONGODB_URI,
-        settings.MONGODB_DB,
+        settings.mongo_db_name,
         settings.S3_BUCKET,
         settings.S3_REGION,
         settings.S3_ENDPOINT_URL,
@@ -167,7 +191,7 @@ def get_storage() -> MediaStorage:
     elif backend == "mongo":
         if not settings.MONGODB_URI:
             raise RuntimeError("MONGODB_URI is required when STORAGE_BACKEND=mongo")
-        instance = MongoGridFSStorage(settings.MONGODB_URI, settings.MONGODB_DB)
+        instance = MongoGridFSStorage(settings.MONGODB_URI, settings.mongo_db_name)
     else:
         raise RuntimeError("STORAGE_BACKEND must be one of: local, s3, mongo")
 
@@ -198,7 +222,7 @@ def optimize_image_bytes(data: bytes, mime_type: str) -> Tuple[bytes, str, int, 
 
 def public_media_url(media_id: int, file_token: str) -> str:
     base = get_settings().PUBLIC_API_BASE_URL.rstrip("/")
-    return f"{base}/api/media/{media_id}/file?t={file_token}"
+    return f"{base}/api/media/{media_id}?t={file_token}"
 
 
 def create_pending_media(
@@ -262,6 +286,7 @@ def complete_media(
             },
         )
         media.storage_key = storage_key
+        media.file_name = filename
         media.size_bytes = size_bytes
         media.file_token = token
         media.sha256 = hashlib.sha256(data).hexdigest()

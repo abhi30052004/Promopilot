@@ -41,6 +41,14 @@ class Property(Base):
     content_generation_status = Column(String, default='NONE', nullable=False)  # NONE|PENDING|PROCESSING|SUCCESS|FAILED
     scraped_at = Column(DateTime)
 
+    # Spec additions: full scraped context + reproducible snapshot for AI generation.
+    content = Column(Text)                 # full article/property text
+    summary = Column(Text)
+    tags = Column(JsonVariant)
+    language = Column(String)              # language of title/description/content (en|he)
+    source_snapshot = Column(JsonVariant)  # exact scraped context used for generation
+    source_published_at = Column(DateTime)
+
     content_items = relationship("ContentItem", back_populates="property")
     property_images = relationship("PropertyImage", back_populates="property")
     generated_media = relationship("GeneratedMedia",
@@ -65,6 +73,7 @@ class GeneratedMedia(Base):
     )
     media_type = Column(String, nullable=False)          # IMAGE | VIDEO
     provider = Column(String)                            # SCRAPED | OPENAI | FFMPEG | PILLOW
+    file_name = Column(String)
     prompt = Column(Text)
     storage_url = Column(Text)
     storage_key = Column(String)
@@ -113,8 +122,8 @@ class ContentItem(Base):
     __tablename__ = "content_items"
     __table_args__ = (
         UniqueConstraint(
-            'property_id', 'generation_date', 'kind', 'variant_number', 'platform', 'language',
-            name='uq_content_items_v2'
+            'property_id', 'generation_date', 'kind', 'variant_number', 'language',
+            name='uq_content_items_v3'
         ),
     )
 
@@ -152,6 +161,13 @@ class ContentItem(Base):
     generation_status = Column(String, default='PENDING')   # PENDING|PROCESSING|SUCCESS|FAILED
     error = Column(Text)
 
+    # Spec additions
+    platform_targets = Column(JsonVariant)                  # ["instagram","facebook",...]
+    contact_email = Column(String)
+    source_snapshot = Column(JsonVariant)
+    generation_mode = Column(String)                        # HUMAN | AUTOMATION
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
     property = relationship("Property", back_populates="content_items")
     publish_logs = relationship(
         "PublishLog",
@@ -164,7 +180,9 @@ class ContentItem(Base):
 
 
 class PublishLog(Base):
+    """One row per (content, platform): the same content can go to many platforms."""
     __tablename__ = "publish_logs"
+    __table_args__ = (UniqueConstraint("content_id", "platform", name="uq_publish_logs_content_platform"),)
 
     id = Column(Integer, primary_key=True, index=True)
     content_item_id = Column(Integer, ForeignKey("content_items.id"), index=True)
@@ -179,6 +197,9 @@ class PublishLog(Base):
     content_id = Column(Integer, ForeignKey("content_items.id"), index=True)
     published_at = Column(DateTime)
     external_post_id = Column(String)
+    scheduled_at = Column(DateTime)
+    is_demo = Column(Boolean, default=True, nullable=False)   # True = DEMO PUBLISHED (no real API call)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     content_item = relationship(
         "ContentItem", foreign_keys=[content_item_id], back_populates="publish_logs"
@@ -210,6 +231,8 @@ class AutomationLog(Base):
     mode = Column(String)
     status = Column(String)
     error = Column(Text)
+    language = Column(String)
+    platform = Column(String)
     created_at = Column(DateTime, server_default=func.now())
 
 

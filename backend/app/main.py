@@ -17,14 +17,17 @@ from .models import Setting
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_cfg = get_settings()
 DEFAULT_SETTINGS = {
     "posts_per_day": 3,
     "stories_per_day": 3,
     "story_duration_seconds": 10,
     "max_ai_images_per_property": 3,
-    "languages": ["he", "en"],
-    "approval_mode": "HUMAN",       # HUMAN | AUTOMATION
-    "platforms_enabled": ["facebook", "instagram", "tiktok", "x", "telegram"],
+    "languages": ["en", "he"],
+    "default_language": _cfg.DEFAULT_LANGUAGE if _cfg.DEFAULT_LANGUAGE in ("en", "he") else "en",
+    "contact_email": _cfg.DEFAULT_CONTACT_EMAIL,
+    "approval_mode": "AUTOMATION" if _cfg.DEFAULT_APPROVAL_MODE.lower().startswith("auto") else "HUMAN",
+    "platforms_enabled": _cfg.default_platforms,
     "brand_tone": "relaxing",
     "post_slots": ["09:00", "15:00", "19:00"],
     "story_slots": ["11:00", "17:00", "20:00"],
@@ -46,6 +49,9 @@ def seed_settings():
                         existing.value = "HUMAN"
                     elif existing.value in ("auto", "automatic"):
                         existing.value = "AUTOMATION"
+                # Replace the pre-spec platform default with the spec default (Instagram/Facebook/LinkedIn).
+                if k == "platforms_enabled" and existing.value == ["facebook", "instagram", "tiktok", "x", "telegram"]:
+                    existing.value = v
         db.commit()
     except Exception as e:
         logger.error(f"Failed to seed settings: {e}")
@@ -109,7 +115,7 @@ app = FastAPI(lifespan=lifespan, title="PromoPilot API", version="2.0.0")
 
 settings = get_settings()
 
-frontend_url = os.getenv("FRONTEND_URL")
+frontend_url = settings.FRONTEND_URL or os.getenv("FRONTEND_URL")
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 if frontend_url:
     origins.append(frontend_url)

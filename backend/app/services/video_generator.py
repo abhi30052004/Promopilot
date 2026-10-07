@@ -15,7 +15,8 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import AutomationLog, ContentItem, GeneratedMedia, Setting
+from app.models import ContentItem, GeneratedMedia
+from app.services.events import log_event
 from app.services.media_storage import (
     complete_media,
     create_pending_media,
@@ -78,20 +79,25 @@ def _text_overlay(text: str, size: int = 80) -> Image.Image:
     return canvas
 
 
-def _cta_overlay(text: str) -> Image.Image:
+def _cta_overlay(text: str, email: str = "") -> Image.Image:
+    """CTA bar (final 3 seconds): call to action + the demo contact e-mail."""
     canvas = Image.new("RGBA", (VIDEO_W, VIDEO_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
-    font = _font(70)
-    display = get_display(text)
-    width = font.getlength(display) if hasattr(font, "getlength") else font.getsize(display)[0]
-    bar_y = VIDEO_H - 260
-    draw.rounded_rectangle((60, bar_y, VIDEO_W - 60, bar_y + 150), 32, fill=(220, 50, 50, 235))
-    draw.text(
-        ((VIDEO_W - width) // 2, bar_y + 35),
-        display,
-        font=font,
-        fill=(255, 255, 255, 255),
-    )
+    font = _font(66)
+    small = _font(54)
+    lines = _wrap(text, font, VIDEO_W - 200)[:2]
+    bar_h = 60 + len(lines) * 84 + (90 if email else 0)
+    bar_y = VIDEO_H - 180 - bar_h
+    draw.rounded_rectangle((60, bar_y, VIDEO_W - 60, bar_y + bar_h), 32, fill=(220, 50, 50, 235))
+    y = bar_y + 30
+    for line in lines:
+        display = get_display(line)
+        width = font.getlength(display) if hasattr(font, "getlength") else font.getsize(display)[0]
+        draw.text(((VIDEO_W - width) // 2, y), display, font=font, fill=(255, 255, 255, 255))
+        y += 84
+    if email:
+        width = small.getlength(email) if hasattr(small, "getlength") else small.getsize(email)[0]
+        draw.text(((VIDEO_W - width) // 2, y + 6), email, font=small, fill=(255, 235, 235, 255))
     return canvas
 
 
@@ -116,7 +122,12 @@ def _vertical_background(source_bytes: Optional[bytes]) -> Image.Image:
 def _build_video(item: ContentItem, source_bytes: Optional[bytes]) -> bytes:
     hook = item.story_hook or item.caption or "Discover your next escape"
     message = item.story_message or item.caption or ""
-    cta = item.cta or ("Book now" if item.language != "he" else "הזמינו עכשיו")
+    email = item.contact_email or ""
+    cta = (item.cta or ("Book now" if item.language != "he" else "הזמינו עכשיו"))
+    if email:
+        # the e-mail gets its own line, so drop it (and its separator) from the CTA sentence
+        cta = cta.replace(email, "").strip(" ·:-—")
+        cta = cta or ("Get in touch" if item.language != "he" else "צרו קשר")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         background_path = os.path.join(tmpdir, "background.jpg")
@@ -128,7 +139,7 @@ def _build_video(item: ContentItem, source_bytes: Optional[bytes]) -> bytes:
         _vertical_background(source_bytes).save(background_path, "JPEG", quality=92)
         _text_overlay(hook, 90).save(hook_path, "PNG")
         _text_overlay(message, 72).save(message_path, "PNG")
-        _cta_overlay(cta).save(cta_path, "PNG")
+        _cta_overlay(cta, email).save(cta_path, "PNG")
 
         command = [
             _ffmpeg_path(),
@@ -180,23 +191,9 @@ def _build_video(item: ContentItem, source_bytes: Optional[bytes]) -> bytes:
         return data
 
 
-def _mode(db: Session) -> str:
-    row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-    return str(row.value if row else "HUMAN")
-
-
-def _log(db: Session, action: str, entity_id: int, status: str, error: str | None = None) -> None:
-    db.add(
-        AutomationLog(
-            action=action,
-            entity_type="generated_media",
-            entity_id=entity_id,
-            mode=_mode(db),
-            status=status,
-            error=error,
-        )
-    )
-    db.commit()
+def _log(db: Session, action: str, entity_id: int, status: str, error: str | None = None,
+         language: str | None = None) -> None:
+    log_event(db, action, "generated_media", entity_id, status, error=error, language=language)
 
 
 def generate_story_video(
@@ -206,7 +203,7 @@ def generate_story_video(
     db: Session,
 ) -> Optional[GeneratedMedia]:
     """Complete a pre-created VIDEO record and link it to the story."""
-    _log(db, "VIDEO_GENERATION_STARTED", media.id, "STARTED")
+    _log(db, "VIDEO_GENERATION_STARTED", media.id, "STARTED", language=item.language)
     try:
         source_bytes = read_media_bytes(source_media) if source_media else None
         video_bytes = _build_video(item, source_bytes)
@@ -223,7 +220,7 @@ def generate_story_video(
         item.media_id = media.id
         item.error = None
         db.commit()
-        _log(db, "VIDEO_GENERATED", media.id, "SUCCESS")
+        _log(db, "VIDEO_GENERATED", media.id, "SUCCESS", language=item.language)
         return media
     except Exception as exc:
         logger.exception("Story video generation failed for content %s", item.id)
@@ -231,7 +228,7 @@ def generate_story_video(
         media.error = str(exc)
         item.error = str(exc)
         db.commit()
-        _log(db, "VIDEO_GENERATION_FAILED", media.id, "FAILED", str(exc))
+        _log(db, "VIDEO_GENERATION_FAILED", media.id, "FAILED", str(exc), language=item.language)
         return None
 
 

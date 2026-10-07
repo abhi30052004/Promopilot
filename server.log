@@ -1,0 +1,20 @@
+INFO:     Started server process [21660]
+INFO:     Waiting for application startup.
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Added job "run_daily_plan_job" to job store "default"
+INFO:apscheduler.scheduler:Added job "publish_due_items_job" to job store "default"
+INFO:apscheduler.scheduler:Added job "media_cleanup_job" to job store "default"
+INFO:apscheduler.scheduler:Scheduler started
+INFO:app.scheduler:Scheduler started.
+INFO:app.main:Starting application in 'development' environment
+INFO:app.main:Database host: ep-wispy-mouse-b5v07mkv-pooler.c-7.us-east-2.aws.neon.tech
+INFO:app.main:Storage backend: mongo
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:apscheduler.scheduler:Scheduler has been shut down
+INFO:app.scheduler:Scheduler stopped.
+INFO:app.main:Shutting down application
+INFO:     Application shutdown complete.

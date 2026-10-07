@@ -1,63 +1,72 @@
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import datetime
+
 from app.database import get_db
 from app.models import AgentLog, AutomationLog, PublishLog
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
+
 @router.get("")
-def get_logs(type: Optional[str] = None, limit: int = Query(50, le=200), db: Session = Depends(get_db)):
+def get_logs(
+    type: Optional[str] = None,
+    action: Optional[str] = None,
+    platform: Optional[str] = None,
+    limit: int = Query(100, le=500),
+    db: Session = Depends(get_db),
+):
+    """Audit events (default), plus optional agent / publish technical logs.
+
+    Every event row exposes: timestamp, action, entity, entityId, status, mode, language,
+    platform, error.
+    """
     results = []
-    
-    if type in [None, "agent"]:
-        agent_logs = db.query(AgentLog).order_by(AgentLog.created_at.desc()).limit(limit).all()
-        for l in agent_logs:
+
+    if type in (None, "automation", "events"):
+        query = db.query(AutomationLog)
+        if action:
+            query = query.filter(AutomationLog.action == action.upper())
+        if platform:
+            query = query.filter(AutomationLog.platform.ilike(f"%{platform.lower()}%"))
+        for e in query.order_by(AutomationLog.created_at.desc(), AutomationLog.id.desc()).limit(limit).all():
             results.append({
-                "id": f"agent_{l.id}",
-                "type": "agent",
-                "run_id": l.run_id,
-                "agent": l.agent,
-                "status": l.status,
-                "provider": l.provider,
-                "duration_ms": l.duration_ms,
-                "retry_count": l.retry_count,
-                "message": l.message,
-                "created_at": l.created_at
-            })
-            
-    if type in [None, "publish"]:
-        publish_logs = db.query(PublishLog).order_by(PublishLog.created_at.desc()).limit(limit).all()
-        for l in publish_logs:
-            results.append({
-                "id": f"publish_{l.id}",
-                "type": "publish",
-                "content_item_id": l.content_item_id,
-                "platform": l.platform,
-                "status": l.status,
-                "response": l.response,
-                "attempt": l.attempt,
-                "error": l.error,
-                "created_at": l.created_at
+                "id": f"automation_{e.id}",
+                "type": "automation",
+                "timestamp": e.created_at,
+                "created_at": e.created_at,
+                "action": e.action,
+                "entity": e.entity_type,
+                "entity_type": e.entity_type,
+                "entityId": e.entity_id,
+                "entity_id": e.entity_id,
+                "status": e.status,
+                "mode": e.mode,
+                "language": e.language,
+                "platform": e.platform,
+                "error": e.error,
             })
 
-    if type in [None, "automation"]:
-        automation_logs = db.query(AutomationLog).order_by(AutomationLog.created_at.desc()).limit(limit).all()
-        for entry in automation_logs:
+    if type in ("agent",):
+        for l in db.query(AgentLog).order_by(AgentLog.created_at.desc()).limit(limit).all():
             results.append({
-                "id": f"automation_{entry.id}",
-                "type": "automation",
-                "action": entry.action,
-                "entity_type": entry.entity_type,
-                "entity_id": entry.entity_id,
-                "mode": entry.mode,
-                "status": entry.status,
-                "error": entry.error,
-                "created_at": entry.created_at,
+                "id": f"agent_{l.id}", "type": "agent", "timestamp": l.created_at, "created_at": l.created_at,
+                "run_id": l.run_id, "action": l.agent, "agent": l.agent, "entity": "llm", "status": l.status,
+                "provider": l.provider, "duration_ms": l.duration_ms, "message": l.message,
+                "mode": None, "language": None, "platform": None, "error": None,
             })
-            
-    # Sort descending
-    results.sort(key=lambda x: x["created_at"] or datetime.min, reverse=True)
-    
+
+    if type in ("publish",):
+        for l in db.query(PublishLog).order_by(PublishLog.updated_at.desc()).limit(limit).all():
+            results.append({
+                "id": f"publish_{l.id}", "type": "publish", "timestamp": l.updated_at or l.created_at,
+                "created_at": l.updated_at or l.created_at, "action": f"PUBLISH_{(l.status or '').upper()}",
+                "entity": "content_item", "entityId": l.content_id, "entity_id": l.content_id,
+                "status": l.status, "mode": None, "language": None, "platform": l.platform,
+                "error": l.error, "demo": bool(l.is_demo),
+            })
+
+    results.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
     return results[:limit]

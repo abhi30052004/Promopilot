@@ -14,7 +14,9 @@ from typing import Optional
 import math
 
 from app.database import get_db, SessionLocal
-from app.models import AutomationLog, GeneratedMedia, ContentItem, Property, Setting
+from app.config import get_settings
+from app.models import GeneratedMedia, ContentItem, Property
+from app.services.events import log_event
 from app.services.media_storage import complete_media, create_pending_media, get_storage
 
 logger = logging.getLogger(__name__)
@@ -48,79 +50,98 @@ def get_media_usage(db: Session = Depends(get_db)):
         "percent_used": round((used_mb / s.MEDIA_MAX_TOTAL_MB) * 100, 2) if s.MEDIA_MAX_TOTAL_MB else 0
     }
 
+def _is_authenticated(request: Request) -> bool:
+    """True when the request carries a valid dashboard bearer token."""
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        return False
+    try:
+        import jwt
+
+        s = get_settings()
+        payload = jwt.decode(header[7:], s.JWT_SECRET or "secret", algorithms=["HS256"])
+        return payload.get("sub") == s.ADMIN_USERNAME
+    except Exception:
+        return False
+
+
 @public_router.get("/{media_id}/file")
-def stream_media_file(media_id: int, request: Request, t: str, db: Session = Depends(get_db)):
-    """Public route to stream GridFS media with HTTP Range support."""
+@public_router.get("/{media_id}")
+def stream_media_file(
+    media_id: int, request: Request, t: Optional[str] = None, db: Session = Depends(get_db)
+):
+    """GET /api/media/{id}: stream the GridFS file with the correct MIME type (HTTP Range supported).
+
+    Native <img>/<video> tags cannot send an Authorization header, so access is granted
+    either by the unguessable per-file token (``?t=``) or by a valid bearer token.
+    """
     media = db.query(GeneratedMedia).filter(GeneratedMedia.id == media_id).first()
-    if not media or media.file_token != t:
+    if not media:
         raise HTTPException(404, "Not found")
+    if not ((t and media.file_token and t == media.file_token) or _is_authenticated(request)):
+        raise HTTPException(404, "Not found")
+    if media.generation_status != "COMPLETED" or not media.storage_key:
+        raise HTTPException(404, "Media is not available")
 
     storage = get_storage()
-    if not media.storage_key:
-        raise HTTPException(404, "Not found")
-
     try:
         grid_out, length, stored_mime_type = storage.open_stream(media.storage_key)
     except Exception:
         raise HTTPException(404, "File not found in storage")
 
     range_header = request.headers.get('Range')
-    
+
     headers = {
         "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "private, max-age=31536000, immutable",
         "ETag": f'"{media.sha256}"'
     }
+    content_type = media.mime_type or stored_mime_type
 
     if range_header:
-        # e.g. bytes=0-1023
         try:
             byte_range = range_header.replace('bytes=', '').split('-')
-            start = int(byte_range[0])
+            start = int(byte_range[0]) if byte_range[0] else 0
             end = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else length - 1
         except ValueError:
             start, end = 0, length - 1
-            
+
         if start >= length:
+            grid_out.close()
             return Response(status_code=416, headers={"Content-Range": f"bytes */{length}"})
 
         end = min(end, length - 1)
         chunk_size = end - start + 1
-        
         headers["Content-Range"] = f"bytes {start}-{end}/{length}"
         headers["Content-Length"] = str(chunk_size)
-        headers["Content-Type"] = media.mime_type or stored_mime_type
 
         def iterfile():
             grid_out.seek(start)
             remaining = chunk_size
             while remaining > 0:
-                read_size = min(remaining, 1024 * 64)
-                chunk = grid_out.read(read_size)
+                chunk = grid_out.read(min(remaining, 1024 * 64))
                 if not chunk:
                     break
                 remaining -= len(chunk)
                 yield chunk
             grid_out.close()
 
-        return StreamingResponse(iterfile(), status_code=206, headers=headers)
-    else:
-        headers["Content-Length"] = str(length)
-        headers["Content-Type"] = media.mime_type or stored_mime_type
+        return StreamingResponse(iterfile(), status_code=206, headers=headers, media_type=content_type)
 
-        def iterfile():
-            while True:
-                chunk = grid_out.read(1024 * 64)
-                if not chunk:
-                    break
-                yield chunk
-            grid_out.close()
+    headers["Content-Length"] = str(length)
 
-        return StreamingResponse(iterfile(), status_code=200, headers=headers)
+    def iterfile_full():
+        while True:
+            chunk = grid_out.read(1024 * 64)
+            if not chunk:
+                break
+            yield chunk
+        grid_out.close()
 
+    return StreamingResponse(iterfile_full(), status_code=200, headers=headers, media_type=content_type)
 
 
-@router.get("/{media_id}")
+@router.get("/{media_id}/meta")
 def get_media(media_id: int, db: Session = Depends(get_db)):
     media = db.query(GeneratedMedia).filter(GeneratedMedia.id == media_id).first()
     if not media:
@@ -131,6 +152,10 @@ def get_media(media_id: int, db: Session = Depends(get_db)):
         "content_id": media.content_id,
         "media_type": media.media_type,
         "provider": media.provider,
+        "gridfs_file_id": media.storage_key,
+        "file_name": media.file_name,
+        "size_bytes": media.size_bytes,
+        "prompt": media.prompt,
         "storage_url": media.storage_url,
         "thumbnail_url": media.thumbnail_url,
         "mime_type": media.mime_type,
@@ -151,6 +176,8 @@ def generate_image(req: GenerateImageRequest, bg: BackgroundTasks, db: Session =
     prop = db.query(Property).filter(Property.id == req.property_id).first()
     if not prop:
         raise HTTPException(404, "Property not found")
+    if not get_settings().OPENAI_API_KEY:
+        raise HTTPException(503, "OPENAI_API_KEY is not configured - AI image generation is unavailable")
 
     if req.content_id:
         item = db.query(ContentItem).filter(ContentItem.id == req.content_id).first()
@@ -209,15 +236,8 @@ def _generate_image_bg(media_id: int, property_id: int):
             return
 
         media.generation_status = "GENERATING"
-        mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-        db.add(AutomationLog(
-            action="IMAGE_GENERATION_STARTED",
-            entity_type="generated_media",
-            entity_id=media.id,
-            mode=mode_row.value if mode_row else "HUMAN",
-            status="STARTED",
-        ))
         db.commit()
+        log_event(db, "IMAGE_GENERATION_STARTED", "generated_media", media.id, "STARTED")
 
         from app.services.image_validator import _generate_ai_image, _build_image_prompt
 
@@ -228,14 +248,8 @@ def _generate_image_bg(media_id: int, property_id: int):
             item = db.query(ContentItem).filter(ContentItem.id == media.content_id).first()
             if item:
                 item.media_id = media.id
-        db.add(AutomationLog(
-            action="IMAGE_GENERATED",
-            entity_type="generated_media",
-            entity_id=media.id,
-            mode=mode_row.value if mode_row else "HUMAN",
-            status="SUCCESS",
-        ))
         db.commit()
+        log_event(db, "IMAGE_GENERATED", "generated_media", media.id, "SUCCESS")
     except Exception as exc:
         logger.error(f"BG image generation failed for media {media_id}: {exc}")
         try:
@@ -243,19 +257,9 @@ def _generate_image_bg(media_id: int, property_id: int):
             if media:
                 media.generation_status = "FAILED"
                 media.error = str(exc)
-                mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-                db.add(AutomationLog(
-                    action="IMAGE_GENERATION_FAILED",
-                    entity_type="generated_media",
-                    entity_id=media.id,
-                    mode=mode_row.value if mode_row else "HUMAN",
-                    status="FAILED",
-                    error=str(exc),
-                ))
                 db.commit()
+                log_event(db, "IMAGE_GENERATION_FAILED", "generated_media", media.id, "FAILED", error=str(exc))
         except Exception:
             pass
     finally:
         db.close()
-
-

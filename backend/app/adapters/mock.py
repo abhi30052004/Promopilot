@@ -13,8 +13,8 @@ class MockPublisher(BasePublisher):
         self.failure_rate = float(os.environ.get("MOCK_FAILURE_RATE", "0"))
 
     def publish(self, item: ContentItem) -> Dict[str, Any]:
-        # 0.5-1.5s delay
-        time.sleep(random.uniform(0.5, 1.5))
+        # short simulated latency
+        time.sleep(random.uniform(0.2, 0.6))
         
         if random.random() < self.failure_rate:
             return {

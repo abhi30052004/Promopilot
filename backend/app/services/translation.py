@@ -48,6 +48,7 @@ Link: {item.link}
         cta=res.cta,
         link=res.link,
         status="draft",
-        published_url=None
+        platform_targets=item.platform_targets,
+        contact_email=item.contact_email,
     )
     return new_item

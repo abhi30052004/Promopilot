@@ -1,14 +1,23 @@
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel
 
-from ..database import get_db, SessionLocal
-from ..models import Property, PropertyImage, GeneratedMedia, AutomationLog, Setting
-from ..schemas import PropertyRead
-from ..services.ingestion import sync_site
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.database import SessionLocal, get_db
+from app.models import ContentItem, GeneratedMedia, Property, PropertyImage
+from app.services.events import (
+    SUPPORTED_LANGUAGES,
+    SUPPORTED_PLATFORMS,
+    get_default_language,
+    get_mode,
+    log_event,
+)
+from app.services.ingestion import sync_site
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +25,11 @@ router = APIRouter(prefix="/properties", tags=["Properties"])
 
 
 class SyncRequest(BaseModel):
-    url: str = "https://tzelahahar.co.il/"
+    url: str = "https://tzelahahar.co.il/en/articles"
+
+
+class ApproveRequest(BaseModel):
+    language: Optional[str] = None          # target_language for the generated content
 
 
 class RejectRequest(BaseModel):
@@ -26,45 +39,99 @@ class RejectRequest(BaseModel):
 class GenerateContentRequest(BaseModel):
     date: Optional[str] = None
     force: bool = False
+    language: Optional[str] = None          # target_language: en | he
+    kinds: Optional[List[str]] = None       # ["post"], ["story"] or both (default)
+    variants: Optional[List[int]] = None    # 1..3 (post type / story variant)
+    platform_targets: Optional[List[str]] = None
 
 
+# ------------------------------------------------------------------------------ sync
 @router.post("/sync")
 def trigger_sync(req: SyncRequest, bg: BackgroundTasks, db: Session = Depends(get_db)):
-    """Synchronously syncs the provided URL to scrape property data."""
+    """Scrape the given site/section. In AUTOMATION mode the full workflow runs afterwards."""
     try:
         results = sync_site(req.url, db)
-        mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-        automatic = bool(mode_row and str(mode_row.value).upper() == "AUTOMATION")
-        for property_id in results.get("property_ids", []):
-            bg.add_task(_process_property_bg, property_id, automatic, automatic)
-        return {"status": "ok", "results": results}
     except Exception as e:
+        log_event(db, "SCRAPE_FAILED", "site", None, "FAILED", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Store the scraped images in GridFS right away (no AI, runs in the background) so cards show
+    # real images immediately instead of waiting for approval.
+    if results.get("property_ids"):
+        bg.add_task(_store_images_bg, list(results["property_ids"]))
+
+    results["automation_queued"] = 0
+    results["automation_skipped"] = 0
+    if get_mode(db) == "AUTOMATION":
+        pending_ids = [
+            row[0]
+            for row in db.query(Property.id)
+            .filter(Property.id.in_(results.get("property_ids", [])), Property.approval_status == "PENDING")
+            .all()
+        ]
+        limit = get_settings().AUTOMATION_BATCH_LIMIT
+        run, skipped = pending_ids[:limit], pending_ids[limit:]
+        for property_id in skipped:
+            log_event(db, "AUTO_APPROVED", "property", property_id, "SKIPPED",
+                      error=f"Automation batch limit ({limit}) reached; approve manually or re-run")
+        if run:
+            bg.add_task(_run_automation_batch, run)
+        results["automation_queued"] = len(run)
+        results["automation_skipped"] = len(skipped)
+    return {"status": "ok", "results": results}
+
+
+# ------------------------------------------------------------------------------ read
+def _summary(prop: Property, preview: Optional[GeneratedMedia], counts: dict) -> dict:
+    data = {column.name: getattr(prop, column.name) for column in prop.__table__.columns}
+    # The list view only needs a short text; the full text is served by the detail endpoint.
+    data["content"] = (prop.content or "")[:400] or None
+    data.pop("source_snapshot", None)
+    data.update(
+        preview_url=preview.storage_url if preview else None,
+        preview_media_id=preview.id if preview else None,
+        preview_status=None,
+        content_counts=counts,
+    )
+    return data
 
 
 @router.get("")
-def get_properties(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    props = db.query(Property).offset(skip).limit(limit).all()
-    return [_property_summary(prop, db) for prop in props]
+def get_properties(
+    skip: int = 0,
+    limit: int = 1000,
+    approval_status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Property)
+    if approval_status:
+        query = query.filter(Property.approval_status == approval_status.upper())
+    props = query.order_by(Property.scraped_at.desc().nullslast(), Property.id.desc()).offset(skip).limit(limit).all()
+    if not props:
+        return []
+    ids = [p.id for p in props]
 
-
-def _property_summary(prop: Property, db: Session) -> dict:
-    preview = (
+    previews: dict[int, GeneratedMedia] = {}
+    rows = (
         db.query(PropertyImage, GeneratedMedia)
         .join(GeneratedMedia, PropertyImage.media_id == GeneratedMedia.id)
-        .filter(
-            PropertyImage.property_id == prop.id,
-            GeneratedMedia.generation_status == "COMPLETED",
-        )
+        .filter(PropertyImage.property_id.in_(ids), GeneratedMedia.generation_status == "COMPLETED")
         .order_by(PropertyImage.is_ai_generated.asc(), PropertyImage.id.asc())
-        .first()
+        .all()
     )
-    return {
-        column.name: getattr(prop, column.name) for column in prop.__table__.columns
-    } | {
-        "preview_url": preview[1].storage_url if preview else None,
-        "preview_status": preview[0].status if preview else None,
-    }
+    for pi, media in rows:
+        previews.setdefault(pi.property_id, media)
+
+    counts: dict[int, dict] = {}
+    for pid, kind, n in (
+        db.query(ContentItem.property_id, ContentItem.kind, func.count(ContentItem.id))
+        .filter(ContentItem.property_id.in_(ids))
+        .group_by(ContentItem.property_id, ContentItem.kind)
+        .all()
+    ):
+        counts.setdefault(pid, {"post": 0, "story": 0})[kind] = n
+
+    return [_summary(p, previews.get(p.id), counts.get(p.id, {"post": 0, "story": 0})) for p in props]
 
 
 @router.get("/{prop_id}")
@@ -73,79 +140,60 @@ def get_property(prop_id: int, db: Session = Depends(get_db)):
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    # Include image status
-    images = db.query(PropertyImage).filter(PropertyImage.property_id == prop_id).all()
     image_data = []
-    for pi in images:
-        media = None
-        if pi.media_id:
-            media = db.query(GeneratedMedia).filter(GeneratedMedia.id == pi.media_id).first()
+    for pi in db.query(PropertyImage).filter(PropertyImage.property_id == prop_id).order_by(PropertyImage.id).all():
+        media = db.query(GeneratedMedia).filter(GeneratedMedia.id == pi.media_id).first() if pi.media_id else None
         image_data.append({
             "id": pi.id,
             "source_url": pi.source_url,
             "status": pi.status,
             "failure_reason": pi.failure_reason,
             "is_ai_generated": pi.is_ai_generated,
-            "media_url": media.storage_url if media else None,
+            "media_id": media.id if media else None,
+            "media_url": media.storage_url if media and media.generation_status == "COMPLETED" else None,
+            "media_status": media.generation_status if media else None,
         })
 
-    return {
-        "id": prop.id,
-        "name": prop.name,
-        "slug": prop.slug,
-        "type": prop.type,
-        "description": prop.description,
-        "amenities": prop.amenities,
-        "location": prop.location,
-        "url": prop.url,
-        "source_url": prop.source_url,
-        "title": prop.title,
-        "images": prop.images,
-        "last_synced_at": prop.last_synced_at,
-        "created_at": prop.created_at,
-        "updated_at": prop.updated_at,
-        "approval_status": prop.approval_status,
-        "approved_at": prop.approved_at,
-        "rejected_at": prop.rejected_at,
-        "rejection_reason": prop.rejection_reason,
-        "media_status": prop.media_status,
-        "content_generation_status": prop.content_generation_status,
-        "scraped_at": prop.scraped_at,
-        "price": prop.price,
-        "category": prop.category,
-        "property_images": image_data,
+    data = {column.name: getattr(prop, column.name) for column in prop.__table__.columns}
+    data["property_images"] = image_data
+    data["content_counts"] = {
+        kind: n
+        for kind, n in db.query(ContentItem.kind, func.count(ContentItem.id))
+        .filter(ContentItem.property_id == prop_id).group_by(ContentItem.kind).all()
     }
+    return data
 
 
+# ------------------------------------------------------------------------------ approve / reject
 @router.post("/{prop_id}/approve")
-def approve_property(prop_id: int, bg: BackgroundTasks, db: Session = Depends(get_db)):
+def approve_property(
+    prop_id: int,
+    bg: BackgroundTasks,
+    req: ApproveRequest = None,
+    db: Session = Depends(get_db),
+):
     prop = db.query(Property).filter(Property.id == prop_id).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    if prop.approval_status == "APPROVED":
-        return get_property(prop_id, db)
     if prop.approval_status == "REJECTED":
         raise HTTPException(status_code=409, detail="Cannot approve a rejected property")
+    language = (req.language if req and req.language else None) or get_default_language(db)
+    if language not in SUPPORTED_LANGUAGES:
+        raise HTTPException(422, "language must be 'en' or 'he'")
+    if not (prop.name and (prop.description or prop.content)):
+        raise HTTPException(422, "Property has no scraped text to promote")
 
-    prop.approval_status = "APPROVED"
-    prop.approved_at = datetime.now(timezone.utc)
+    if prop.approval_status != "APPROVED":
+        prop.approval_status = "APPROVED"
+        prop.approved_at = datetime.now(timezone.utc)
+        prop.rejected_at = None
+        prop.rejection_reason = None
+        log_event(db, "PROPERTY_APPROVED", "property", prop.id, "SUCCESS", language=language, commit=False)
+    prop.content_generation_status = "PENDING"
     db.commit()
 
-    # Trigger image validation in background
-    bg.add_task(_process_property_bg, prop_id, False, True)
-
-    # Log if automation mode
-    s = db.query(Setting).filter(Setting.key == "approval_mode").first()
-    mode = s.value if s else "HUMAN"
-    db.add(AutomationLog(
-        action="PROPERTY_APPROVED",
-        entity_type="property",
-        entity_id=prop.id,
-        mode=mode,
-        status="SUCCESS",
-    ))
-    db.commit()
-
+    # Validate/store images, then generate 3 posts + 3 stories (in the background).
+    bg.add_task(_process_property_bg, prop_id, False, True, language)
     return get_property(prop_id, db)
 
 
@@ -158,17 +206,9 @@ def reject_property(prop_id: int, req: RejectRequest = None, db: Session = Depen
     prop.approval_status = "REJECTED"
     prop.approved_at = None
     prop.rejected_at = datetime.now(timezone.utc)
-    if req and req.reason:
-        prop.rejection_reason = req.reason
-    mode_row = db.query(Setting).filter(Setting.key == "approval_mode").first()
-    db.add(AutomationLog(
-        action="PROPERTY_REJECTED",
-        entity_type="property",
-        entity_id=prop.id,
-        mode=mode_row.value if mode_row else "HUMAN",
-        status="SUCCESS",
-    ))
+    prop.rejection_reason = req.reason if req and req.reason else None
     db.commit()
+    log_event(db, "PROPERTY_REJECTED", "property", prop.id, "SUCCESS", error=None)
     return get_property(prop_id, db)
 
 
@@ -178,30 +218,38 @@ def generate_property_content(
     req: GenerateContentRequest = None,
     db: Session = Depends(get_db),
 ):
+    """Generate content now. Default = 3 posts + 3 stories; ``kinds``/``variants`` for manual runs."""
     prop = db.query(Property).filter(Property.id == prop_id).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-
-    # Hard guard
     if prop.approval_status != "APPROVED":
         raise HTTPException(
             status_code=400,
-            detail="Property must be approved before content generation. A rejected property can never generate content.",
+            detail="Property must be approved before content generation. A rejected or pending property cannot generate content.",
         )
+    req = req or GenerateContentRequest()
+    if req.platform_targets and not set(req.platform_targets) <= set(SUPPORTED_PLATFORMS):
+        raise HTTPException(422, "Unsupported platform in platform_targets")
 
-    from ..services.content_generator import generate_content_for_property
-
-    req_date = req.date if req else None
-    force = req.force if req else False
+    from app.services.content_generator import generate_content_for_property
 
     try:
-        result = generate_content_for_property(prop, db, generation_date=req_date, force=force)
+        result = generate_content_for_property(
+            prop, db, generation_date=req.date, force=req.force, language=req.language,
+            kinds=req.kinds, variants=req.variants, platform_targets=req.platform_targets,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         logger.error(f"Content generation error for property {prop_id}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    if result.get("skipped"):
+        raise HTTPException(
+            status_code=409,
+            detail="This content already exists for the selected property, date and language. "
+                   "Use Regenerate on the existing item to create a new version.",
+        )
     return {"status": "ok", **result}
 
 
@@ -214,8 +262,8 @@ def validate_property_images_endpoint(prop_id: int, bg: BackgroundTasks, db: Ses
     return {"status": "ok", "message": "Image validation started in background"}
 
 
+# ------------------------------------------------------------------------------ background jobs
 def _validate_images_bg(prop_id: int, force: bool = False):
-    """Background task to validate images for a property."""
     db = SessionLocal()
     try:
         prop = db.query(Property).filter(Property.id == prop_id).first()
@@ -229,8 +277,35 @@ def _validate_images_bg(prop_id: int, force: bool = False):
         db.close()
 
 
-def _process_property_bg(prop_id: int, auto_approve: bool, generate_content: bool) -> None:
-    """Validate media, optionally auto-approve, then run the 3+3 content pipeline."""
+def _store_images_bg(property_ids: list[int]) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(property_id: int) -> None:
+        db = SessionLocal()
+        try:
+            prop = db.query(Property).filter(Property.id == property_id).first()
+            if prop and prop.approval_status != "REJECTED":
+                from app.services.image_validator import validate_property_images
+
+                validate_property_images(prop, db, allow_ai=False)
+        except Exception as exc:
+            logger.error("Image storing failed for property %s: %s", property_id, exc)
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(one, property_ids))
+
+
+def _run_automation_batch(property_ids: list[int]) -> None:
+    for property_id in property_ids:
+        _process_property_bg(property_id, True, True, None)
+
+
+def _process_property_bg(
+    prop_id: int, auto_approve: bool, generate_content: bool, language: Optional[str] = None
+) -> None:
+    """Store/validate media, optionally AI-validate + auto-approve, then run the 3+3 pipeline."""
     db = SessionLocal()
     try:
         prop = db.query(Property).filter(Property.id == prop_id).first()
@@ -240,46 +315,42 @@ def _process_property_bg(prop_id: int, auto_approve: bool, generate_content: boo
 
         validate_property_images(prop, db)
         if auto_approve and prop.approval_status == "PENDING":
-            # Eligibility is deliberately factual and deterministic: a scraped item must
-            # have a name and a source URL. AI never invents missing property details.
+            mode = "AUTOMATION"
             if not prop.name or not (prop.source_url or prop.url) or prop.media_status != "SUCCESS":
-                db.add(AutomationLog(
-                    action="PROPERTY_AUTO_APPROVED",
-                    entity_type="property",
-                    entity_id=prop.id,
-                    mode="AUTOMATION",
-                    status="FAILED",
-                    error="Property is missing a name, source URL, or usable media",
-                ))
-                db.commit()
+                log_event(db, "AUTO_APPROVED", "property", prop.id, "FAILED", mode=mode,
+                          error="Property is missing a name, source URL, or usable media")
+                return
+            try:
+                from app.services.ai_validation import validate_property_with_ai
+
+                verdict = validate_property_with_ai(prop)
+            except Exception as exc:
+                log_event(db, "AUTO_APPROVED", "property", prop.id, "FAILED", mode=mode,
+                          error=f"AI validation unavailable: {exc}")
+                return
+            if not verdict.suitable:
+                log_event(db, "AUTO_APPROVED", "property", prop.id, "REJECTED_BY_AI", mode=mode,
+                          error=verdict.reason)
                 return
             prop.approval_status = "APPROVED"
             prop.approved_at = datetime.now(timezone.utc)
-            db.add(AutomationLog(
-                action="PROPERTY_AUTO_APPROVED",
-                entity_type="property",
-                entity_id=prop.id,
-                mode="AUTOMATION",
-                status="SUCCESS",
-            ))
             db.commit()
+            log_event(db, "AUTO_APPROVED", "property", prop.id, "SUCCESS", mode=mode,
+                      language=prop.language)
 
         if generate_content and prop.approval_status == "APPROVED":
             from app.services.content_generator import generate_content_for_property
 
-            generate_content_for_property(prop, db)
+            generate_content_for_property(prop, db, language=language)
     except Exception as exc:
         logger.exception("Property processing failed for %s", prop_id)
         try:
-            db.add(AutomationLog(
-                action="CONTENT_GENERATED" if generate_content else "IMAGE_GENERATION_FAILED",
-                entity_type="property",
-                entity_id=prop_id,
-                mode="AUTOMATION" if auto_approve else "HUMAN",
-                status="FAILED",
-                error=str(exc),
-            ))
-            db.commit()
+            db.rollback()
+            prop = db.query(Property).filter(Property.id == prop_id).first()
+            if prop and prop.content_generation_status in ("PENDING", "PROCESSING"):
+                prop.content_generation_status = "FAILED"
+                db.commit()
+            log_event(db, "CONTENT_GENERATION_FAILED", "property", prop_id, "FAILED", error=str(exc))
         except Exception:
             db.rollback()
     finally:

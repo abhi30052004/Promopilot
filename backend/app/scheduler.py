@@ -10,7 +10,8 @@ import uuid
 from app.database import SessionLocal
 from app.models import ContentItem, Setting, Property, AutomationLog, PublishLog
 from app.config import get_settings
-from app.services.publisher import PublisherService
+from app.services.publishing import publish_due
+from app.services.events import get_mode
 from app.agents.state import AgentState
 from app.agents.graph import app_graph
 
@@ -31,47 +32,29 @@ def get_scheduler_status():
 
 def run_daily_plan_job():
     """
-    Daily job: select one APPROVED property (least recently used) and generate 3+3 content.
+    Daily job (AUTOMATION mode only): pick one APPROVED property (least recently used) and
+    generate 3 posts + 3 stories; automation then approves and schedules them.
     """
     db = SessionLocal()
     try:
-        settings_db = db.query(Setting).all()
-        settings_dict = {s.key: s.value for s in settings_db}
-        mode = settings_dict.get("approval_mode", "HUMAN")
-
+        if get_mode(db) != "AUTOMATION":
+            logger.info("Daily plan skipped: HUMAN approval mode")
+            return
         tz = pytz.timezone(app_settings.TIMEZONE)
         now_date = datetime.now(tz).strftime("%Y-%m-%d")
 
-        # Select APPROVED property with least recent content generation
-        from sqlalchemy import func
         approved_props = db.query(Property).filter(Property.approval_status == "APPROVED").all()
         if not approved_props:
             logger.info("Daily plan: no APPROVED properties found")
             return
 
-        # Pick least recently used
-        prop = sorted(
-            approved_props,
-            key=lambda p: (p.scraped_at or datetime.min)
-        )[0]
+        def last_used(p):
+            latest = db.query(ContentItem.generation_date).filter(ContentItem.property_id == p.id)                .order_by(ContentItem.generation_date.desc()).first()
+            return latest[0] if latest else ""
 
-        # Check idempotency
-        existing = db.query(ContentItem).filter(
-            ContentItem.property_id == prop.id,
-            ContentItem.generation_date == now_date
-        ).count()
-
-        if existing > 0:
-            logger.info(f"Daily plan: content already exists for property {prop.id} on {now_date}")
-            return
-
+        prop = sorted(approved_props, key=last_used)[0]
         from app.services.content_generator import generate_content_for_property
         result = generate_content_for_property(prop, db, generation_date=now_date)
-
-        # In AUTOMATION mode: auto-approve content that passed review
-        if mode in ("AUTOMATION", "auto", "AUTOMATION"):
-            _auto_approve_content(prop.id, now_date, db, mode)
-
         logger.info(f"Daily plan complete for {prop.name}: {result}")
     except Exception as e:
         logger.error(f"Error in daily_plan_job: {e}")
@@ -79,58 +62,11 @@ def run_daily_plan_job():
         db.close()
 
 
-def _auto_approve_content(property_id: int, generation_date: str, db, mode: str):
-    """Auto-approve and auto-schedule content that passed generation in AUTOMATION mode."""
-    items = db.query(ContentItem).filter(
-        ContentItem.property_id == property_id,
-        ContentItem.generation_date == generation_date,
-        ContentItem.approval_status == "PENDING",
-    ).all()
-
-    for item in items:
-        item.approval_status = "APPROVED"
-        item.publish_status = "SCHEDULED"
-        item.status = "scheduled"
-        db.add(AutomationLog(
-            action="CONTENT_AUTO_APPROVED",
-            entity_type="content_item",
-            entity_id=item.id,
-            mode=mode,
-            status="SUCCESS",
-        ))
-    db.commit()
-
-
 def publish_due_items_job():
+    """Publish every SCHEDULED PublishLog whose time has come (one log per platform)."""
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
-
-        items = db.query(ContentItem).filter(
-            ContentItem.publish_status == "SCHEDULED",
-            ContentItem.scheduled_at <= now
-        ).all()
-
-        for item in items:
-            if item.approval_status == "REJECTED":
-                continue  # Never publish rejected
-
-            try:
-                PublisherService.publish_item(item, db)
-            except Exception as ex:
-                logger.error(f"Error publishing item {item.id}: {ex}")
-                item.publish_status = "FAILED"
-                item.status = "failed"
-                db.add(PublishLog(
-                    content_item_id=item.id,
-                    content_id=item.id,
-                    platform=item.platform,
-                    status="failed",
-                    error=str(ex),
-                    attempt=0,
-                ))
-                db.commit()
-
+        publish_due(db)
     except Exception as e:
         logger.error(f"Error in publish_due_items_job: {e}")
     finally:

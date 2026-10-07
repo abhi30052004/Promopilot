@@ -1,193 +1,181 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Terminal, Play, Pause, ChevronDown, ChevronUp, AlertCircle, 
-  CheckCircle2, Clock, RotateCw, Filter, RefreshCw
-} from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { RefreshCw, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
-import { format } from 'date-fns';
+import { useLanguage } from '../lib/LanguageContext';
+import { fmtDateTime, errorText, PLATFORMS } from '../lib/format';
+import { LOG_ACTIONS } from '../lib/i18n/logs';
+import StatusBadge from '../components/StatusBadge';
+
+const selectCls = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500';
 
 export default function Logs() {
-  const [logs, setLogs] = useState([]);
+  const { t, lang } = useLanguage();
+  const [events, setEvents] = useState([]);
+  const [action, setAction] = useState('');
+  const [platform, setPlatform] = useState('');
+  const [auto, setAuto] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [isPaused, setIsPaused] = useState(false);
-  const [expandedRows, setExpandedRows] = useState({});
-  const [filters, setFilters] = useState({ source: '', status: '' });
-  
-  const fetchLogs = async () => {
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const mounted = useRef(true);
+
+  const load = useCallback(async (silent = false) => {
+    if (silent) setRefreshing(true);
     try {
-      const res = await api.get('/api/logs');
-      setLogs(res.data);
+      const res = await api.get('/api/logs', { params: { limit: 200, action, platform } });
+      if (!mounted.current) return;
+      setEvents(Array.isArray(res.data) ? res.data : []);
+      setError('');
     } catch (e) {
-      console.error(e);
+      if (!mounted.current) return;
+      setError(errorText(e, t('logs.load_failed')));
     } finally {
-      setLoading(false);
+      if (mounted.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  };
+  }, [action, platform, t]);
 
   useEffect(() => {
-    fetchLogs();
-  }, []);
+    mounted.current = true;
+    load();
+    return () => { mounted.current = false; };
+  }, [load]);
 
   useEffect(() => {
-    if (isPaused) return;
-    const interval = setInterval(fetchLogs, 5000);
-    return () => clearInterval(interval);
-  }, [isPaused]);
+    if (!auto) return undefined;
+    const timer = setInterval(() => load(true), 10000);
+    return () => clearInterval(timer);
+  }, [auto, load]);
 
-  const toggleRow = (id) => {
-    setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  const actionLabel = (code) => {
+    const key = `logs.action.${code}`;
+    const text = t(key);
+    return text === key ? String(code || '').replace(/_/g, ' ').toLowerCase() : text;
   };
-
-  const getStatusBadge = (status) => {
-    const s = status?.toUpperCase() || 'UNKNOWN';
-    if (s === 'SUCCESS' || s === 'PUBLISHED') return <span className="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-700 flex items-center gap-1 w-max"><CheckCircle2 size={12}/> {s}</span>;
-    if (s === 'FAILED') return <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 flex items-center gap-1 w-max"><AlertCircle size={12}/> {s}</span>;
-    if (s === 'RETRY' || s === 'PENDING') return <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700 flex items-center gap-1 w-max"><RotateCw size={12}/> {s}</span>;
-    return <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700 w-max">{s}</span>;
-  };
-
-  const filteredLogs = logs.filter(l => {
-    if (filters.source) {
-      const source = l.type === 'agent' ? l.agent : l.type === 'automation' ? l.action : `publisher (${l.platform})`;
-      if (!source.toLowerCase().includes(filters.source.toLowerCase())) return false;
-    }
-    if (filters.status && l.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
-    return true;
-  });
+  const platformLabel = (p) => (p ? t(`platform.${p}`) : '—');
+  const langLabel = (l) => (l ? t(`lang.${l}`) : '—');
+  const modeLabel = (m) => (m ? t(`mode.${m}`) : '—');
+  const entityText = (e) => [e.entity, e.entityId != null && e.entityId !== '' ? `#${e.entityId}` : ''].filter(Boolean).join(' ') || '—';
 
   return (
-    <div className="flex flex-col gap-6 max-w-7xl mx-auto h-full min-h-[calc(100vh-theme(spacing.20))]">
-      <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <Terminal size={20} className="text-slate-500" />
-            יומן מערכת (Logs)
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">צפה ביומן הפעולות של סוכני ה-AI והמפרסמים בזמן אמת</p>
+          <h1 className="text-2xl font-bold text-slate-900">{t('logs.title')}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t('logs.subtitle')}</p>
         </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
-            <Filter size={16} className="text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="סינון מקור..." 
-              value={filters.source}
-              onChange={e => setFilters({...filters, source: e.target.value})}
-              className="bg-transparent border-none outline-none text-sm w-32"
-            />
-            <select 
-              value={filters.status}
-              onChange={e => setFilters({...filters, status: e.target.value})}
-              className="bg-transparent border-s border-slate-200 ps-2 ms-1 outline-none text-sm text-slate-600"
-            >
-              <option value="">כל הסטטוסים</option>
-              <option value="success">Success</option>
-              <option value="failed">Failed</option>
-              <option value="retry">Retry</option>
-              <option value="published">Published</option>
-            </select>
-          </div>
-          
-          <button 
-            onClick={() => setIsPaused(!isPaused)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${isPaused ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}
-          >
-            {isPaused ? <Play size={16} /> : <Pause size={16} />}
-            {isPaused ? 'המשך עדכון' : 'השהה עדכון'}
-          </button>
-        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+        >
+          <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+          {t('common.refresh')}
+        </button>
       </div>
 
-      <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
-        {loading && logs.length === 0 ? (
-          <div className="flex-1 flex justify-center items-center">
-            <RefreshCw className="animate-spin text-slate-400" />
-          </div>
-        ) : (
-          <div className="overflow-auto flex-1">
-            <table className="w-full text-start border-collapse">
-              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 text-xs shadow-sm z-10">
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+          {t('logs.filter.action')}
+          <select value={action} onChange={(e) => setAction(e.target.value)} className={selectCls}>
+            <option value="">{t('logs.filter.all_actions')}</option>
+            {LOG_ACTIONS.map((code) => (
+              <option key={code} value={code}>{actionLabel(code)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+          {t('logs.filter.platform')}
+          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={selectCls}>
+            <option value="">{t('logs.filter.all_platforms')}</option>
+            {PLATFORMS.map((p) => (
+              <option key={p} value={p}>{t(`platform.${p}`)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 pb-2 text-sm text-slate-700">
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+          {t('logs.auto_refresh')}
+        </label>
+        <span className="ms-auto pb-2 text-xs text-slate-400">{t('logs.count', { n: events.length })}</span>
+      </div>
+
+      {error && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <AlertCircle size={18} className="shrink-0" />
+          <span className="flex-1 min-w-0 break-words">{error}</span>
+          <button onClick={() => load(true)} className="rounded-lg bg-red-600 px-3 py-1.5 text-white hover:bg-red-700">
+            {t('common.retry')}
+          </button>
+        </div>
+      )}
+
+      {loading && events.length === 0 && !error && (
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500">{t('common.loading')}</div>
+      )}
+
+      {!loading && !error && events.length === 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500">{t('logs.empty')}</div>
+      )}
+
+      {events.length > 0 && (
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="py-3 px-4 font-medium text-start w-48">זמן</th>
-                  <th className="py-3 px-4 font-medium text-start">מקור (Source)</th>
-                  <th className="py-3 px-4 font-medium text-start">סטטוס</th>
-                  <th className="py-3 px-4 font-medium text-start">מידע נוסף</th>
-                  <th className="py-3 px-4 font-medium text-end w-10"></th>
+                  {['time', 'action', 'entity', 'status', 'mode', 'language', 'platform', 'error'].map((col) => (
+                    <th key={col} className="px-4 py-3 text-start font-semibold whitespace-nowrap">{t(`logs.col.${col}`)}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm font-mono">
-                {filteredLogs.map(log => {
-                  const isAgent = log.type === 'agent';
-                  const isAutomation = log.type === 'automation';
-                  const sourceStr = isAgent ? log.agent : isAutomation ? log.action : `Publisher (${log.platform})`;
-                  const hasDetails = log.message || log.error || log.response;
-                  const isExpanded = expandedRows[log.id];
-                  
-                  return (
-                    <React.Fragment key={log.id}>
-                      <tr 
-                        className={`hover:bg-slate-50 transition-colors ${hasDetails ? 'cursor-pointer' : ''} ${log.status?.toLowerCase() === 'failed' ? 'bg-red-50/30' : ''}`}
-                        onClick={() => hasDetails && toggleRow(log.id)}
-                      >
-                        <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                          {format(new Date(log.created_at), 'yyyy-MM-dd HH:mm:ss')}
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-slate-700">
-                          {sourceStr}
-                        </td>
-                        <td className="py-3 px-4">
-                          {getStatusBadge(log.status)}
-                        </td>
-                        <td className="py-3 px-4 text-slate-500 text-xs flex gap-4">
-                          {isAgent ? (
-                            <>
-                              {log.provider && <span><span className="text-slate-400">LLM:</span> {log.provider}</span>}
-                              {log.duration_ms && <span className="flex items-center gap-1"><Clock size={12}/> {log.duration_ms}ms</span>}
-                              {log.retry_count > 0 && <span className="text-amber-600">Retry: {log.retry_count}</span>}
-                            </>
-                          ) : isAutomation ? (
-                            <>
-                              <span>{log.entity_type} #{log.entity_id}</span>
-                              <span>Mode: {log.mode}</span>
-                            </>
-                          ) : (
-                            <>
-                              {log.content_item_id && <span><span className="text-slate-400">Item ID:</span> {log.content_item_id}</span>}
-                              {log.attempt > 1 && <span className="text-amber-600">Attempt: {log.attempt}</span>}
-                            </>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-end text-slate-400">
-                          {hasDetails && (isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />)}
-                        </td>
-                      </tr>
-                      {isExpanded && hasDetails && (
-                        <tr className="bg-slate-50/80 border-b border-slate-200">
-                          <td colSpan={5} className="p-4 pt-0">
-                            <div className="bg-slate-900 rounded-lg p-4 text-slate-300 text-xs overflow-x-auto whitespace-pre-wrap border border-slate-800 shadow-inner mt-2">
-                              {log.error ? (
-                                <span className="text-red-400">{log.error}</span>
-                              ) : log.message ? (
-                                log.message
-                              ) : (
-                                JSON.stringify(log.response, null, 2)
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
+              <tbody className="divide-y divide-slate-100">
+                {events.map((e) => (
+                  <tr key={e.id} className="align-top hover:bg-slate-50">
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDateTime(e.timestamp, lang)}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">{actionLabel(e.action)}</div>
+                      <div className="font-mono text-[11px] text-slate-400" dir="ltr">{e.action}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{entityText(e)}</td>
+                    <td className="px-4 py-3">{e.status ? <StatusBadge status={e.status} /> : '—'}</td>
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{modeLabel(e.mode)}</td>
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{langLabel(e.language)}</td>
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{platformLabel(e.platform)}</td>
+                    <td className="px-4 py-3 max-w-xs break-words text-red-600">{e.error || ''}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-            {filteredLogs.length === 0 && (
-              <div className="text-center text-slate-400 py-12">לא נמצאו רשומות לוג מתאימות</div>
-            )}
           </div>
-        )}
-      </div>
+
+          {/* Mobile cards */}
+          <div className="space-y-3 md:hidden">
+            {events.map((e) => (
+              <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-900">{actionLabel(e.action)}</div>
+                    <div className="font-mono text-[11px] text-slate-400" dir="ltr">{e.action}</div>
+                  </div>
+                  {e.status && <StatusBadge status={e.status} />}
+                </div>
+                <div className="mt-2 text-xs text-slate-500">{fmtDateTime(e.timestamp, lang)}</div>
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                  <div><dt className="text-slate-400">{t('logs.col.entity')}</dt><dd className="text-slate-700 break-words">{entityText(e)}</dd></div>
+                  <div><dt className="text-slate-400">{t('logs.col.mode')}</dt><dd className="text-slate-700">{modeLabel(e.mode)}</dd></div>
+                  <div><dt className="text-slate-400">{t('logs.col.language')}</dt><dd className="text-slate-700">{langLabel(e.language)}</dd></div>
+                  <div><dt className="text-slate-400">{t('logs.col.platform')}</dt><dd className="text-slate-700">{platformLabel(e.platform)}</dd></div>
+                </dl>
+                {e.error && <div className="mt-3 break-words rounded-lg bg-red-50 p-2 text-xs text-red-600">{e.error}</div>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
