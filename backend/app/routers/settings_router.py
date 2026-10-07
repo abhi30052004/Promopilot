@@ -35,16 +35,22 @@ class ApprovalModeRequest(BaseModel):
 
 @router.get("")
 def get_all_settings(db: Session = Depends(get_db)):
-    """Persisted settings, with spec defaults filled in for anything not stored yet."""
+    """Persisted settings (one query), with spec defaults filled in for anything not stored yet."""
+    cfg = get_settings()
     stored = {s.key: s.value for s in db.query(Setting).all()}
-    stored["approval_mode"] = get_mode(db)
-    stored["platforms_enabled"] = get_default_platforms(db)
-    stored["default_language"] = get_default_language(db)
-    stored["contact_email"] = get_contact_email(db)
+    mode = str(stored.get("approval_mode") or getattr(cfg, "DEFAULT_APPROVAL_MODE", "human")).upper()
+    stored["approval_mode"] = "AUTOMATION" if mode.startswith("AUTO") else "HUMAN"
+    platforms = stored.get("platforms_enabled")
+    if not isinstance(platforms, list) or not platforms:
+        platforms = getattr(cfg, "default_platforms", ["instagram", "facebook", "linkedin"])
+    stored["platforms_enabled"] = [p for p in platforms if p in SUPPORTED_PLATFORMS]
+    language = stored.get("default_language") or getattr(cfg, "DEFAULT_LANGUAGE", "en")
+    stored["default_language"] = language if language in SUPPORTED_LANGUAGES else "en"
+    stored["contact_email"] = stored.get("contact_email") or getattr(cfg, "DEFAULT_CONTACT_EMAIL", "contact@tzelahahar.co.il")
     stored["story_duration_seconds"] = 10
     stored["supported_platforms"] = SUPPORTED_PLATFORMS
     stored["supported_languages"] = SUPPORTED_LANGUAGES
-    stored["openai_configured"] = bool(get_settings().OPENAI_API_KEY)
+    stored["openai_configured"] = bool(cfg.OPENAI_API_KEY)
     return stored
 
 

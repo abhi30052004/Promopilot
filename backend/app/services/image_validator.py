@@ -402,3 +402,40 @@ def ensure_at_least_one_image(prop: Property, db: Session) -> Optional[Generated
         )
         .first()
     )
+
+
+def store_missing_images() -> None:
+    """Startup job: store scraped images (no AI) for promotable items that have none yet."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.database import SessionLocal
+    from app.services.events import PROMOTABLE_TYPES
+
+    db = SessionLocal()
+    try:
+        ids = [
+            row[0]
+            for row in db.query(Property.id)
+            .filter(
+                Property.type.in_(PROMOTABLE_TYPES),
+                Property.approval_status != "REJECTED",
+                Property.media_status.in_(["PENDING", "PROCESSING"]),
+            )
+            .all()
+        ]
+    finally:
+        db.close()
+
+    def one(property_id: int) -> None:
+        session = SessionLocal()
+        try:
+            prop = session.query(Property).filter(Property.id == property_id).first()
+            if prop:
+                validate_property_images(prop, session, allow_ai=False)
+        except Exception as exc:
+            logger.error("Startup image storing failed for property %s: %s", property_id, exc)
+        finally:
+            session.close()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(one, ids))

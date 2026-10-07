@@ -108,8 +108,8 @@ export default function Approvals() {
         api.get('/api/properties', { params: { approval_status: 'PENDING' } }),
         api.get('/api/content', { params: { approval_status: 'PENDING' } }),
       ]);
-      setProperties(props.data);
-      setContent(items.data);
+      setProperties(props.data.filter((p) => p.approval_status === 'PENDING'));
+      setContent(items.data.filter((i) => i.approval_status === 'PENDING'));
       setError('');
     } catch (e) {
       setError(errorText(e, t('common.load_failed')));

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_PLATFORMS = ["instagram", "facebook", "linkedin", "tiktok", "x", "telegram"]
 SUPPORTED_LANGUAGES = ["en", "he"]
+PROMOTABLE_TYPES = ["article", "LodgingBusiness", "Hotel", "VacationRental"]
 _OLD_DEFAULT_PLATFORMS = ["facebook", "instagram", "tiktok", "x", "telegram"]
 
 
@@ -23,7 +24,7 @@ def get_setting(db: Session, key: str, default: Any = None) -> Any:
 
 def get_mode(db: Session) -> str:
     """HUMAN | AUTOMATION (persisted in the settings table)."""
-    env_default = get_settings().DEFAULT_APPROVAL_MODE
+    env_default = getattr(get_settings(), "DEFAULT_APPROVAL_MODE", "human")
     value = get_setting(db, "approval_mode", "AUTOMATION" if str(env_default).lower().startswith("auto") else "HUMAN")
     return "AUTOMATION" if str(value).upper() == "AUTOMATION" else "HUMAN"
 
@@ -31,17 +32,17 @@ def get_mode(db: Session) -> str:
 def get_default_platforms(db: Session) -> list[str]:
     value = get_setting(db, "platforms_enabled", None)
     if not isinstance(value, list) or not value:
-        value = get_settings().default_platforms
+        value = getattr(get_settings(), "default_platforms", ["instagram", "facebook", "linkedin"])
     return [p for p in value if p in SUPPORTED_PLATFORMS]
 
 
 def get_default_language(db: Session) -> str:
-    value = get_setting(db, "default_language", None) or get_settings().DEFAULT_LANGUAGE
+    value = get_setting(db, "default_language", None) or getattr(get_settings(), "DEFAULT_LANGUAGE", "en")
     return value if value in SUPPORTED_LANGUAGES else "en"
 
 
 def get_contact_email(db: Session) -> str:
-    return get_setting(db, "contact_email", None) or get_settings().DEFAULT_CONTACT_EMAIL
+    return get_setting(db, "contact_email", None) or getattr(get_settings(), "DEFAULT_CONTACT_EMAIL", "contact@tzelahahar.co.il")
 
 
 def log_event(

@@ -5,12 +5,14 @@ from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session, defer
 
 from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.models import ContentItem, GeneratedMedia, Property, PropertyImage
 from app.services.events import (
+    PROMOTABLE_TYPES,
     SUPPORTED_LANGUAGES,
     SUPPORTED_PLATFORMS,
     get_default_language,
@@ -69,7 +71,7 @@ def trigger_sync(req: SyncRequest, bg: BackgroundTasks, db: Session = Depends(ge
             .filter(Property.id.in_(results.get("property_ids", [])), Property.approval_status == "PENDING")
             .all()
         ]
-        limit = get_settings().AUTOMATION_BATCH_LIMIT
+        limit = getattr(get_settings(), "AUTOMATION_BATCH_LIMIT", 3)
         run, skipped = pending_ids[:limit], pending_ids[limit:]
         for property_id in skipped:
             log_event(db, "AUTO_APPROVED", "property", property_id, "SKIPPED",
@@ -82,11 +84,11 @@ def trigger_sync(req: SyncRequest, bg: BackgroundTasks, db: Session = Depends(ge
 
 
 # ------------------------------------------------------------------------------ read
-def _summary(prop: Property, preview: Optional[GeneratedMedia], counts: dict) -> dict:
-    data = {column.name: getattr(prop, column.name) for column in prop.__table__.columns}
+def _summary(prop: Property, content_preview: Optional[str], preview: Optional[GeneratedMedia], counts: dict) -> dict:
+    unloaded = sa_inspect(prop).unloaded  # heavy columns are deferred in the list query
+    data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns if c.key not in unloaded}
     # The list view only needs a short text; the full text is served by the detail endpoint.
-    data["content"] = (prop.content or "")[:400] or None
-    data.pop("source_snapshot", None)
+    data["content"] = content_preview or None
     data.update(
         preview_url=preview.storage_url if preview else None,
         preview_media_id=preview.id if preview else None,
@@ -101,14 +103,22 @@ def get_properties(
     skip: int = 0,
     limit: int = 1000,
     approval_status: Optional[str] = None,
+    include_other: bool = False,
     db: Session = Depends(get_db),
 ):
-    query = db.query(Property)
+    query = db.query(Property, func.substr(Property.content, 1, 400)).options(
+        defer(Property.content), defer(Property.source_snapshot)
+    )
+    if not include_other:
+        # Hide site navigation pages (contact, about, listing pages) that older scrapes stored.
+        query = query.filter(Property.type.in_(PROMOTABLE_TYPES))
     if approval_status:
         query = query.filter(Property.approval_status == approval_status.upper())
-    props = query.order_by(Property.scraped_at.desc().nullslast(), Property.id.desc()).offset(skip).limit(limit).all()
-    if not props:
+    pairs = query.order_by(Property.scraped_at.desc().nullslast(), Property.id.desc()).offset(skip).limit(limit).all()
+    if not pairs:
         return []
+    props = [pair[0] for pair in pairs]
+    previews_text = {pair[0].id: pair[1] for pair in pairs}
     ids = [p.id for p in props]
 
     previews: dict[int, GeneratedMedia] = {}
@@ -131,7 +141,7 @@ def get_properties(
     ):
         counts.setdefault(pid, {"post": 0, "story": 0})[kind] = n
 
-    return [_summary(p, previews.get(p.id), counts.get(p.id, {"post": 0, "story": 0})) for p in props]
+    return [_summary(p, previews_text.get(p.id), previews.get(p.id), counts.get(p.id, {"post": 0, "story": 0})) for p in props]
 
 
 @router.get("/{prop_id}")

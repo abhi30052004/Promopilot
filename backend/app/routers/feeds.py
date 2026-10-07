@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.database import get_db
 from app.models import ContentItem, GeneratedMedia, Property, PublishLog
@@ -13,7 +13,7 @@ FEED_STATUSES = ("PUBLISHED", "SCHEDULED", "FAILED")
 
 def _feed_rows(db: Session, platform: Optional[str], kind: Optional[str], status: Optional[str]) -> list[dict]:
     """One feed entry per PublishLog, so the same content shows up in every platform feed."""
-    query = db.query(PublishLog, ContentItem).join(ContentItem, PublishLog.content_id == ContentItem.id)
+    query = db.query(PublishLog, ContentItem).options(defer(ContentItem.source_snapshot)).join(ContentItem, PublishLog.content_id == ContentItem.id)
     query = query.filter(PublishLog.status.in_(FEED_STATUSES), ContentItem.approval_status == "APPROVED")
     if platform and platform != "all":
         query = query.filter(PublishLog.platform == platform.lower())
@@ -28,7 +28,7 @@ def _feed_rows(db: Session, platform: Optional[str], kind: Optional[str], status
     media_ids = {item.media_id for _l, item in pairs if item.media_id}
     prop_ids = {item.property_id for _l, item in pairs if item.property_id}
     media = {m.id: m for m in db.query(GeneratedMedia).filter(GeneratedMedia.id.in_(media_ids)).all()} if media_ids else {}
-    props = {p.id: p for p in db.query(Property).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
+    props = {p.id: p for p in db.query(Property.id, Property.name, Property.source_url, Property.url).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
 
     rows = []
     for log, item in pairs:

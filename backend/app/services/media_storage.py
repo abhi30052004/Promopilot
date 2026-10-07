@@ -168,7 +168,7 @@ def get_storage() -> MediaStorage:
         backend,
         settings.MEDIA_DIR,
         settings.MONGODB_URI,
-        settings.mongo_db_name,
+        (getattr(settings, 'mongo_db_name', None) or settings.MONGODB_DB),
         settings.S3_BUCKET,
         settings.S3_REGION,
         settings.S3_ENDPOINT_URL,
@@ -191,7 +191,7 @@ def get_storage() -> MediaStorage:
     elif backend == "mongo":
         if not settings.MONGODB_URI:
             raise RuntimeError("MONGODB_URI is required when STORAGE_BACKEND=mongo")
-        instance = MongoGridFSStorage(settings.MONGODB_URI, settings.mongo_db_name)
+        instance = MongoGridFSStorage(settings.MONGODB_URI, (getattr(settings, 'mongo_db_name', None) or settings.MONGODB_DB))
     else:
         raise RuntimeError("STORAGE_BACKEND must be one of: local, s3, mongo")
 

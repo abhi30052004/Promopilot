@@ -3,7 +3,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.config import get_settings
 from app.database import get_db
@@ -43,7 +43,7 @@ def get_calendar(
         raise HTTPException(422, "start must be before end")
 
     # Event time = scheduled_at for scheduled items, published_at for published ones.
-    query = db.query(PublishLog, ContentItem).join(ContentItem, PublishLog.content_id == ContentItem.id)
+    query = db.query(PublishLog, ContentItem).options(defer(ContentItem.source_snapshot)).join(ContentItem, PublishLog.content_id == ContentItem.id)
     query = query.filter(PublishLog.status.in_(["SCHEDULED", "PUBLISHED"]), ContentItem.approval_status == "APPROVED")
     if platform:
         query = query.filter(PublishLog.platform == platform.lower())
@@ -52,7 +52,7 @@ def get_calendar(
     media_ids = {item.media_id for _l, item in pairs if item.media_id}
     prop_ids = {item.property_id for _l, item in pairs if item.property_id}
     media = {m.id: m for m in db.query(GeneratedMedia).filter(GeneratedMedia.id.in_(media_ids)).all()} if media_ids else {}
-    props = {p.id: p for p in db.query(Property).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
+    props = {p.id: p for p in db.query(Property.id, Property.name, Property.source_url, Property.url).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
 
     events = []
     for log, item in pairs:

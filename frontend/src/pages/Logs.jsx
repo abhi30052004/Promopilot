@@ -22,9 +22,19 @@ export default function Logs() {
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
     try {
-      const res = await api.get('/api/logs', { params: { limit: 200, action, platform } });
+      const res = await api.get('/api/logs', { params: { type: 'automation', limit: 200, action, platform } });
       if (!mounted.current) return;
-      setEvents(Array.isArray(res.data) ? res.data : []);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      // tolerate both the new event shape and the older log shape
+      setEvents(rows
+        .map((e) => ({
+          ...e,
+          timestamp: e.timestamp || e.created_at,
+          action: e.action || e.agent,
+          entity: e.entity || e.entity_type,
+          entityId: e.entityId ?? e.entity_id ?? e.content_item_id,
+        }))
+        .filter((e) => e.action));
       setError('');
     } catch (e) {
       if (!mounted.current) return;

@@ -24,10 +24,10 @@ DEFAULT_SETTINGS = {
     "story_duration_seconds": 10,
     "max_ai_images_per_property": 3,
     "languages": ["en", "he"],
-    "default_language": _cfg.DEFAULT_LANGUAGE if _cfg.DEFAULT_LANGUAGE in ("en", "he") else "en",
-    "contact_email": _cfg.DEFAULT_CONTACT_EMAIL,
-    "approval_mode": "AUTOMATION" if _cfg.DEFAULT_APPROVAL_MODE.lower().startswith("auto") else "HUMAN",
-    "platforms_enabled": _cfg.default_platforms,
+    "default_language": getattr(_cfg, "DEFAULT_LANGUAGE", "en") if getattr(_cfg, "DEFAULT_LANGUAGE", "en") in ("en", "he") else "en",
+    "contact_email": getattr(_cfg, "DEFAULT_CONTACT_EMAIL", "contact@tzelahahar.co.il"),
+    "approval_mode": "AUTOMATION" if str(getattr(_cfg, "DEFAULT_APPROVAL_MODE", "human")).lower().startswith("auto") else "HUMAN",
+    "platforms_enabled": getattr(_cfg, "default_platforms", ["instagram", "facebook", "linkedin"]),
     "brand_tone": "relaxing",
     "post_slots": ["09:00", "15:00", "19:00"],
     "story_slots": ["11:00", "17:00", "20:00"],
@@ -81,6 +81,31 @@ async def lifespan(app: FastAPI):
         os.makedirs(settings.MEDIA_DIR, exist_ok=True)
     seed_settings()
 
+    # Open a few DB connections up-front (a new remote connection costs ~4s).
+    def _warm_pool():
+        from concurrent.futures import ThreadPoolExecutor
+        from sqlalchemy import text
+        from .database import engine
+
+        def one(_):
+            with engine.connect() as conn:
+                conn.execute(text("select 1"))
+
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(one, range(4)))
+        except Exception as exc:
+            logger.warning(f"DB warm-up failed: {exc}")
+
+    import threading as _t
+    _t.Thread(target=_warm_pool, daemon=True).start()
+
+    # Store scraped images in GridFS in the background so cards show real images.
+    import threading
+    from .services.image_validator import store_missing_images
+
+    threading.Thread(target=store_missing_images, daemon=True).start()
+
     from .scheduler import start_scheduler, stop_scheduler
     start_scheduler()
 
@@ -115,7 +140,7 @@ app = FastAPI(lifespan=lifespan, title="PromoPilot API", version="2.0.0")
 
 settings = get_settings()
 
-frontend_url = settings.FRONTEND_URL or os.getenv("FRONTEND_URL")
+frontend_url = getattr(settings, "FRONTEND_URL", None) or os.getenv("FRONTEND_URL")
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 if frontend_url:
     origins.append(frontend_url)

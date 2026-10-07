@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 from app.adapters import get_adapter
 from app.config import get_settings
 from app.models import ContentItem, GeneratedMedia, Property, PublishLog
-from app.services.events import SUPPORTED_PLATFORMS, get_setting, log_event
+from concurrent.futures import ThreadPoolExecutor
+
+from app.services.events import SUPPORTED_PLATFORMS, get_mode, get_setting, log_event
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -100,6 +102,54 @@ def refresh_item_status(item: ContentItem, db: Session) -> None:
     db.commit()
 
 
+def _call_provider(platform: str, item: ContentItem) -> dict:
+    """Run the provider (network/simulated latency) with retries. No database access."""
+    adapter = get_adapter(platform)
+    result: dict = {}
+    for _attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            result = adapter.publish(item)
+        except Exception as exc:  # provider crashed -> record, retry
+            result = {"status": "failed", "error": str(exc), "demo": True}
+        if result.get("status") == "success":
+            break
+    result["_attempts"] = _attempt
+    return result
+
+
+def publish_many(item: ContentItem, platforms: list[str], db: Session) -> list[PublishLog]:
+    """Publish to several platforms at once: providers run in parallel, DB writes are batched."""
+    logs = {p: _get_log(db, item, p) for p in platforms}
+    todo = [p for p in platforms if (logs[p].status or "").upper() != "PUBLISHED"]
+    if todo:
+        # make sure relationships a provider may read are loaded before leaving this thread
+        _ = item.media
+        with ThreadPoolExecutor(max_workers=len(todo)) as pool:
+            results = dict(zip(todo, pool.map(lambda p: _call_provider(p, item), todo)))
+        mode = get_mode(db)
+        now = _utcnow()
+        for platform in todo:
+            result = results[platform]
+            ok = result.get("status") == "success"
+            log = logs[platform]
+            log.attempt = result.pop("_attempts", 1)
+            log.status = "PUBLISHED" if ok else "FAILED"
+            log.response = result
+            log.is_demo = bool(result.get("demo", True))
+            log.error = None if ok else (result.get("error") or "Publishing failed")
+            log.published_at = now if ok else None
+            log.external_post_id = (
+                result.get("external_id") or result.get("post_id") or result.get("message_id")
+            ) if ok else None
+            log_event(
+                db, "POST_PUBLISHED" if ok else "POST_FAILED", "content_item", item.id,
+                "SUCCESS" if ok else "FAILED", error=log.error, language=item.language,
+                platform=platform, mode=mode, commit=False,
+            )
+        db.commit()
+    return [logs[p] for p in platforms]
+
+
 class PublishingService:
     """publish(content, platform) / schedule(content, platform, datetime)."""
 
@@ -175,7 +225,7 @@ def approve_and_publish(item: ContentItem, platforms: Iterable[str], db: Session
     db.commit()
     if not was_approved:
         log_event(db, "CONTENT_APPROVED", "content_item", item.id, language=item.language)
-    logs = [PublishingService.publish(item, platform, db) for platform in platforms]
+    logs = publish_many(item, platforms, db)
     refresh_item_status(item, db)
     return logs
 

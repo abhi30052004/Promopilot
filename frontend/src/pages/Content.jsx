@@ -120,7 +120,8 @@ export default function Content() {
         api.get('/api/properties', { params: { approval_status: 'APPROVED' } }),
       ]);
       setItems(content.data);
-      setProperties(props.data);
+      // only approved items can generate content (also guards against an older API ignoring the filter)
+      setProperties(props.data.filter((p) => p.approval_status === 'APPROVED'));
       setError('');
     } catch (e) {
       setError(errorText(e, t('common.load_failed')));

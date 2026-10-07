@@ -1,4 +1,4 @@
-INFO:     Started server process [19404]
+INFO:     Started server process [28536]
 INFO:     Waiting for application startup.
 INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
 INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
@@ -13,59 +13,26 @@ INFO:app.main:Database host: ep-wispy-mouse-b5v07mkv-pooler.c-7.us-east-2.aws.ne
 INFO:app.main:Storage backend: mongo
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8010 (Press CTRL+C to quit)
-INFO:     127.0.0.1:65003 - "GET /api/health HTTP/1.1" 200 OK
 C:\Users\abhijitbhunia\OneDrive - virtualemployee P Ltd\Desktop\Promopilot\backend\.venv\Lib\site-packages\jwt\api_jwt.py:149: InsecureKeyLengthWarning: The HMAC key is 18 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
   return self._jws.encode(
-INFO:     127.0.0.1:65005 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59737 - "POST /api/auth/login HTTP/1.1" 200 OK
 C:\Users\abhijitbhunia\OneDrive - virtualemployee P Ltd\Desktop\Promopilot\backend\.venv\Lib\site-packages\jwt\api_jwt.py:370: InsecureKeyLengthWarning: The HMAC key is 18 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
   decoded = self.decode_complete(
-INFO:app.services.ingestion:Starting sync for https://tzelahahar.co.il/en/articles
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/sitemap.xml "HTTP/1.1 200 OK"
-INFO:app.services.ingestion:Found sitemap at https://tzelahahar.co.il/sitemap.xml
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/sitemap_index.xml "HTTP/1.1 200 OK"
-INFO:app.services.ingestion:Found sitemap at https://tzelahahar.co.il/sitemap_index.xml
-INFO:app.services.articles:Found 36 English article URLs
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/golan-heights-offroad-adventures "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/attractions-north-israel-complete-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/galilee-viewpoints-manara-cliff-mitzpe-gadot "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/snir-stream-jordan-park-kayak-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/hamat-gader-hot-springs-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/ancient-tiberias-history "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/tzfat-safed-north-vacation "HTTP/1.1 200 OK"
-INFO:apscheduler.executors.default:Running job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:50:18 IDT)" (scheduled at 2026-10-07 14:50:18.547588+03:00)
-INFO:apscheduler.executors.default:Job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:51:18 IDT)" executed successfully
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/galilee-wineries-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/tzfat-art-kabbalah-antiquities "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/ancient-jewish-community-pekiin "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/october-2026-north-events-basalt-sounds-katzrin "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/sukkot-chol-hamoed-vacation-north-three-day-trips "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/tel-hai-and-upper-galilee-settlement-history "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/mount-meron-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/tiberias-hot-springs-attractions "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/iyyon-stream-and-northern-border-story "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/capernaum-christian-heritage-sea-of-galilee "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/galilee-festivals-events-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/golan-heights-wineries-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/kinneret-trail-biking-walking "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/korazim-magdala-sea-of-galilee-heritage-sites "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/water-sports-sea-of-galilee-travel-guide "HTTP/1.1 200 OK"
-INFO:apscheduler.executors.default:Running job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:52:18 IDT)" (scheduled at 2026-10-07 14:51:18.547588+03:00)
-INFO:apscheduler.executors.default:Job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:52:18 IDT)" executed successfully
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/hula-valley-birdwatching-nature-reserve "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/golan-heights-waterfalls-banias-saar-zavitan "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/shabbat-in-meron-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/gamla-masada-of-the-north "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/history-of-safed-holy-city "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/family-activities-kiryat-shmona-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/recommended-sea-of-galilee-beaches "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/metula-and-zion-stream-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/hermon-ski-hikes-golan-travel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/golan-heights-history-yom-kippur-war "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/nahal-amud-horshat-tal-nature-reserves-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/sukkot-2026-northern-israel-guide "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/northern-israel-vacation-after-holidays-autumn "HTTP/1.1 200 OK"
-INFO:httpx:HTTP Request: GET https://tzelahahar.co.il/en/articles/lower-galilee-jeep-tours "HTTP/1.1 200 OK"
-INFO:     127.0.0.1:65005 - "POST /api/properties/sync HTTP/1.1" 200 OK
-INFO:apscheduler.executors.default:Running job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:53:18 IDT)" (scheduled at 2026-10-07 14:52:18.547588+03:00)
-INFO:apscheduler.executors.default:Job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 14:53:18 IDT)" executed successfully
-INFO:     127.0.0.1:65005 - "GET /api/properties HTTP/1.1" 200 OK
+INFO:httpx2:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:app.services.llm:OpenAI gpt-4o-mini request succeeded. Latency: 4.40s
+INFO:httpx2:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:app.services.llm:OpenAI gpt-4o-mini request succeeded. Latency: 4.81s
+INFO:     127.0.0.1:59737 - "POST /api/properties/87/generate-content HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59737 - "POST /api/properties/87/generate-content HTTP/1.1" 409 Conflict
+C:\Users\abhijitbhunia\OneDrive - virtualemployee P Ltd\Desktop\Promopilot\backend\.venv\Lib\site-packages\jwt\api_jwt.py:370: InsecureKeyLengthWarning: The HMAC key is 18 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  decoded = self.decode_complete(
+INFO:     127.0.0.1:59737 - "GET /api/content?language=he HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59737 - "POST /api/content/16/publish HTTP/1.1" 200 OK
+C:\Users\abhijitbhunia\OneDrive - virtualemployee P Ltd\Desktop\Promopilot\backend\.venv\Lib\site-packages\jwt\api_jwt.py:149: InsecureKeyLengthWarning: The HMAC key is 18 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  return self._jws.encode(
+INFO:     127.0.0.1:59505 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59505 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59505 - "GET /api/logs?limit=14 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59505 - "GET /api/content/27 HTTP/1.1" 200 OK
+INFO:apscheduler.executors.default:Running job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 15:28:05 IDT)" (scheduled at 2026-10-07 15:28:05.765800+03:00)
+INFO:apscheduler.executors.default:Job "publish_due_items_job (trigger: interval[0:01:00], next run at: 2026-10-07 15:29:05 IDT)" executed successfully

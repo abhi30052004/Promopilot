@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import PageLoader from './PageLoader';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, FileText, CheckSquare, Home,
@@ -44,7 +45,7 @@ export default function Layout() {
   // Show the persisted approval mode in the header (refreshes on navigation).
   useEffect(() => {
     api.get('/api/settings').then((r) => setMode(r.data.approval_mode)).catch(() => {});
-  }, [location.pathname]);
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -131,7 +132,9 @@ export default function Layout() {
 
         <div className="p-4 md:p-8 flex-1 overflow-x-hidden">
           <ErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PageLoader />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </div>
       </main>

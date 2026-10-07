@@ -8,7 +8,8 @@ from typing import Any, List, Optional
 import pytz
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session, defer
 
 from app.agents.graph import app_graph
 from app.agents.reviewer import run_review
@@ -57,14 +58,15 @@ def serialize_items(items: List[ContentItem], db: Session) -> List[dict]:
     prop_ids = {i.property_id for i in items if i.property_id}
     item_ids = [i.id for i in items]
     media = {m.id: m for m in db.query(GeneratedMedia).filter(GeneratedMedia.id.in_(media_ids)).all()} if media_ids else {}
-    props = {p.id: p for p in db.query(Property).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
+    props = {p.id: p for p in db.query(Property.id, Property.name, Property.source_url, Property.url).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
     logs: dict[int, list] = {}
     for log in db.query(PublishLog).filter(PublishLog.content_id.in_(item_ids)).all():
         logs.setdefault(log.content_id, []).append(_log_dict(log))
 
     out = []
     for item in items:
-        d = {c.name: getattr(item, c.name) for c in item.__table__.columns}
+        unloaded = sa_inspect(item).unloaded
+        d = {c.name: getattr(item, c.name) for c in item.__table__.columns if c.key not in unloaded}
         m = media.get(item.media_id)
         d["media_url"] = m.storage_url if m else None
         d["media_type"] = m.media_type if m else None
@@ -150,7 +152,7 @@ def get_content(
     publish_status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    query = db.query(ContentItem)
+    query = db.query(ContentItem).options(defer(ContentItem.source_snapshot))
     if date:
         query = query.filter(ContentItem.generation_date == date)
     if status:
